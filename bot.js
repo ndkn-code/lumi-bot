@@ -1,13 +1,10 @@
 /**
- * Lumist.ai Discord Bot v3.0
+ * Lumist.ai Discord Bot v3.1
  * 
- * Features:
- * - Onboarding system
- * - Auto-moderation
- * - Slash commands for mods
- * - Ticket system
- * - Warning system
- * - Mod logging
+ * Changes in v3.1:
+ * - Removed score range from onboarding (needs verification instead)
+ * - Simplified onboarding: Nationality → Grade → Rules → Done
+ * - Clearer welcome DM messaging
  */
 
 const {
@@ -24,9 +21,6 @@ const {
   REST,
   Routes,
   ChannelType,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
 } = require('discord.js');
 
 const http = require('http');
@@ -47,21 +41,9 @@ if (!BOT_TOKEN) {
 // AUTO-MOD CONFIGURATION
 // ============================================
 const AUTOMOD_CONFIG = {
-  spam: {
-    enabled: true,
-    maxMessages: 5,
-    timeWindow: 5000,
-    muteMinutes: 10,
-  },
-  mentions: {
-    enabled: true,
-    maxMentions: 5,
-  },
-  duplicates: {
-    enabled: true,
-    maxDuplicates: 3,
-    timeWindow: 60000,
-  },
+  spam: { enabled: true, maxMessages: 5, timeWindow: 5000, muteMinutes: 10 },
+  mentions: { enabled: true, maxMentions: 5 },
+  duplicates: { enabled: true, maxDuplicates: 3, timeWindow: 60000 },
   links: {
     enabled: true,
     allowedDomains: [
@@ -74,26 +56,11 @@ const AUTOMOD_CONFIG = {
       'gyazo.com', 'tenor.com', 'giphy.com',
     ],
   },
-  bannedWords: {
-    enabled: true,
-    words: [],
-    patterns: [],
-  },
-  raid: {
-    enabled: true,
-    joinThreshold: 10,
-    timeWindow: 60000,
-    lockdownMinutes: 5,
-  },
+  bannedWords: { enabled: true, words: [], patterns: [] },
+  raid: { enabled: true, joinThreshold: 10, timeWindow: 60000, lockdownMinutes: 5 },
   warnings: {
     expireDays: 30,
-    escalation: {
-      1: 'warn',
-      2: 'mute_1h',
-      3: 'mute_24h',
-      4: 'ban_7d',
-      5: 'ban_permanent',
-    },
+    escalation: { 1: 'warn', 2: 'mute_1h', 3: 'mute_24h', 4: 'ban_7d', 5: 'ban_permanent' },
   },
 };
 
@@ -104,7 +71,6 @@ const CHANNELS = {
   RULES: 'rules',
   MOD_LOGS: 'mod-logs',
   SUPPORT_TICKETS: 'support-tickets',
-  TICKET_TRANSCRIPTS: 'ticket-transcripts',
 };
 
 // Roles
@@ -115,6 +81,7 @@ const ROLES = {
   MODERATOR: '🛡️ Moderator',
   ADMIN: '⚙️ Admin',
   FOUNDER: '👑 Founder',
+  // Nationality
   VIETNAM: '🇻🇳 Vietnam',
   USA: '🇺🇸 United States',
   UK: '🇬🇧 United Kingdom',
@@ -124,11 +91,7 @@ const ROLES = {
   CHINA: '🇨🇳 China',
   INDIA: '🇮🇳 India',
   OTHER: '🌏 Other International',
-  SCORE_BELOW_1000: '📊 Below 1000',
-  SCORE_1000_1200: '📊 1000-1200',
-  SCORE_1200_1400: '📊 1200-1400',
-  SCORE_1400_1500: '📊 1400-1500',
-  SCORE_1500_PLUS: '📊 1500+',
+  // Grade levels
   FRESHMAN: '🎒 Freshman',
   SOPHOMORE: '🎒 Sophomore',
   JUNIOR: '🎒 Junior',
@@ -262,7 +225,6 @@ const commands = [
 // ============================================
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
-  
   try {
     console.log('📝 Registering slash commands...');
     await rest.put(Routes.applicationGuildCommands(client.user.id, GUILD_ID), { body: commands });
@@ -295,15 +257,6 @@ function getNationalityRole(value) {
     'vietnam': ROLES.VIETNAM, 'usa': ROLES.USA, 'uk': ROLES.UK,
     'singapore': ROLES.SINGAPORE, 'korea': ROLES.KOREA, 'japan': ROLES.JAPAN,
     'china': ROLES.CHINA, 'india': ROLES.INDIA, 'other': ROLES.OTHER,
-  };
-  return map[value];
-}
-
-function getScoreRole(value) {
-  const map = {
-    'below_1000': ROLES.SCORE_BELOW_1000, '1000_1200': ROLES.SCORE_1000_1200,
-    '1200_1400': ROLES.SCORE_1200_1400, '1400_1500': ROLES.SCORE_1400_1500,
-    '1500_plus': ROLES.SCORE_1500_PLUS,
   };
   return map[value];
 }
@@ -496,11 +449,7 @@ async function enableRaidMode(guild) {
     console.log('✅ Raid mode disabled');
     if (modLogChannel) {
       modLogChannel.send({
-        embeds: [new EmbedBuilder()
-          .setColor('#2ECC71')
-          .setTitle('✅ Raid Mode Disabled')
-          .setTimestamp()
-        ]
+        embeds: [new EmbedBuilder().setColor('#2ECC71').setTitle('✅ Raid Mode Disabled').setTimestamp()]
       });
     }
   }, AUTOMOD_CONFIG.raid.lockdownMinutes * 60 * 1000);
@@ -519,7 +468,7 @@ Need help? Create a support ticket!
 **Ticket Categories:**
 • 💬 **General Support** - Questions about the server or community
 • 🐛 **Bug Report** - Report issues with Lumist.ai platform
-• 🎓 **Alumni Verification** - Verify your SAT score and university
+• 🎓 **Alumni Verification** - Verify your SAT score and university admission
 
 Click the button below to open a ticket.
     `)
@@ -550,7 +499,7 @@ function createTicketCategorySelect() {
         .addOptions([
           { label: 'General Support', value: 'general', emoji: '💬', description: 'Questions about the server' },
           { label: 'Bug Report', value: 'bug', emoji: '🐛', description: 'Report platform issues' },
-          { label: 'Alumni Verification', value: 'alumni', emoji: '🎓', description: 'Verify your credentials' },
+          { label: 'Alumni Verification', value: 'alumni', emoji: '🎓', description: 'Verify your SAT score & admission' },
         ])
     );
 
@@ -558,7 +507,6 @@ function createTicketCategorySelect() {
 }
 
 async function createTicketChannel(guild, user, category) {
-  // Check if user already has an open ticket
   if (activeTickets.has(user.id)) {
     return { error: `You already have an open ticket: <#${activeTickets.get(user.id)}>` };
   }
@@ -570,12 +518,10 @@ async function createTicketChannel(guild, user, category) {
   const channelName = `ticket-${ticketNumber}-${user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '');
 
   try {
-    // Find staff roles
     const modRole = await findRole(guild, ROLES.MODERATOR);
     const adminRole = await findRole(guild, ROLES.ADMIN);
     const founderRole = await findRole(guild, ROLES.FOUNDER);
 
-    // Create ticket channel
     const ticketChannel = await guild.channels.create({
       name: channelName,
       type: ChannelType.GuildText,
@@ -590,10 +536,28 @@ async function createTicketChannel(guild, user, category) {
       ],
     });
 
-    // Store active ticket
     activeTickets.set(user.id, ticketChannel.id);
 
-    // Send welcome message
+    // Different welcome messages based on category
+    let instructions = '';
+    if (category === 'alumni') {
+      instructions = `
+**To verify as Alumni, please provide:**
+1. 📸 Screenshot of your official SAT score
+2. 📸 Screenshot of your university admission letter/portal
+
+A moderator will review and assign the 🎓 Alumni role.`;
+    } else if (category === 'bug') {
+      instructions = `
+**Please describe the bug:**
+1. What were you trying to do?
+2. What happened instead?
+3. Screenshots if possible`;
+    } else {
+      instructions = `
+Please describe your issue and a staff member will assist you soon.`;
+    }
+
     const welcomeEmbed = new EmbedBuilder()
       .setColor('#3498DB')
       .setTitle(`${categoryEmoji[category]} ${categoryName[category]} Ticket`)
@@ -602,8 +566,7 @@ Hello ${user}! Thanks for creating a ticket.
 
 **Ticket ID:** \`${ticketNumber}\`
 **Category:** ${categoryName[category]}
-
-Please describe your issue and a staff member will assist you soon.
+${instructions}
       `)
       .setTimestamp()
       .setFooter({ text: 'Use the button below to close this ticket' });
@@ -618,7 +581,6 @@ Please describe your issue and a staff member will assist you soon.
 
     await ticketChannel.send({ content: `${user} | ${modRole ? `<@&${modRole.id}>` : 'Staff'}`, embeds: [welcomeEmbed], components: [closeButton] });
 
-    // Log ticket creation
     const modLogChannel = await findChannel(guild, CHANNELS.MOD_LOGS);
     if (modLogChannel) {
       const logEmbed = new EmbedBuilder()
@@ -644,17 +606,14 @@ async function closeTicket(channel, closedBy) {
   const guild = channel.guild;
   
   try {
-    // Generate transcript
     const messages = await channel.messages.fetch({ limit: 100 });
     const transcript = messages.reverse().map(m => 
       `[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content}${m.attachments.size > 0 ? ' [Attachments: ' + m.attachments.map(a => a.url).join(', ') + ']' : ''}`
     ).join('\n');
 
-    // Find who created the ticket
     const topicMatch = channel.topic?.match(/Ticket by (.+?) \|/);
     const ticketOwner = topicMatch ? topicMatch[1] : 'Unknown';
 
-    // Remove from active tickets
     for (const [userId, channelId] of activeTickets.entries()) {
       if (channelId === channel.id) {
         activeTickets.delete(userId);
@@ -662,7 +621,6 @@ async function closeTicket(channel, closedBy) {
       }
     }
 
-    // Log closure
     const modLogChannel = await findChannel(guild, CHANNELS.MOD_LOGS);
     if (modLogChannel) {
       const logEmbed = new EmbedBuilder()
@@ -675,7 +633,6 @@ async function closeTicket(channel, closedBy) {
         )
         .setTimestamp();
 
-      // Send transcript as file
       const transcriptBuffer = Buffer.from(transcript, 'utf-8');
       await modLogChannel.send({ 
         embeds: [logEmbed],
@@ -683,7 +640,6 @@ async function closeTicket(channel, closedBy) {
       });
     }
 
-    // Delete channel
     await channel.delete('Ticket closed');
     console.log(`🎫 Ticket closed: ${channel.name} by ${closedBy.tag}`);
 
@@ -694,26 +650,23 @@ async function closeTicket(channel, closedBy) {
 }
 
 // ============================================
-// ONBOARDING MESSAGES
+// ONBOARDING MESSAGES (Simplified - No Score Range)
 // ============================================
 function createWelcomeDM() {
   const embed = new EmbedBuilder()
     .setColor('#2ECC71')
-    .setTitle('🌸 Welcome to Lumist.ai!')
+    .setTitle('🦊 Hey there! Welcome to Lumist.ai!')
     .setDescription(`
-Hey there! Welcome to the **Lumist.ai** community!
+I'm **Lumi**, your friendly fox guide! 🌸
 
-Before you can access the full server, complete a quick onboarding process.
+Before you can access the server, I need to ask you a couple quick questions. This only takes **30 seconds**!
 
-**What you'll need to do:**
-1️⃣ Select your nationality
-2️⃣ Tell us your current SAT score range
-3️⃣ Select your grade level
-4️⃣ Accept our community rules
+**What I'll ask:**
+1️⃣ Where are you from?
+2️⃣ What grade are you in?
+3️⃣ Accept the community rules
 
-This only takes about 30 seconds!
-
-Click the button below to get started 👇
+Ready? Click the button below to start! 👇
     `)
     .setThumbnail('https://i.imgur.com/AfFp7pu.png')
     .setFooter({ text: 'Lumist.ai • AI-Powered SAT Prep' });
@@ -722,7 +675,7 @@ Click the button below to get started 👇
     .addComponents(
       new ButtonBuilder()
         .setCustomId('start_onboarding')
-        .setLabel('🚀 Start Onboarding')
+        .setLabel('🚀 Let\'s Go!')
         .setStyle(ButtonStyle.Primary)
     );
 
@@ -732,14 +685,14 @@ Click the button below to get started 👇
 function createNationalitySelect() {
   const embed = new EmbedBuilder()
     .setColor('#3498DB')
-    .setTitle('Step 1 of 3: Where are you from?')
-    .setDescription('Select your nationality from the dropdown below.');
+    .setTitle('🌍 Step 1 of 2: Where are you from?')
+    .setDescription('This helps us connect you with students from your region!');
 
   const select = new ActionRowBuilder()
     .addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('select_nationality')
-        .setPlaceholder('🌍 Select your nationality')
+        .setPlaceholder('Select your country/region')
         .addOptions([
           { label: 'Vietnam', value: 'vietnam', emoji: '🇻🇳' },
           { label: 'United States', value: 'usa', emoji: '🇺🇸' },
@@ -749,30 +702,7 @@ function createNationalitySelect() {
           { label: 'Japan', value: 'japan', emoji: '🇯🇵' },
           { label: 'China', value: 'china', emoji: '🇨🇳' },
           { label: 'India', value: 'india', emoji: '🇮🇳' },
-          { label: 'Other International', value: 'other', emoji: '🌏' },
-        ])
-    );
-
-  return { embeds: [embed], components: [select] };
-}
-
-function createScoreSelect() {
-  const embed = new EmbedBuilder()
-    .setColor('#3498DB')
-    .setTitle('Step 2 of 3: Current SAT score range?')
-    .setDescription('Select your current or most recent practice test score range.');
-
-  const select = new ActionRowBuilder()
-    .addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('select_score')
-        .setPlaceholder('📊 Select your score range')
-        .addOptions([
-          { label: 'Below 1000', value: 'below_1000', description: 'Just getting started' },
-          { label: '1000 - 1200', value: '1000_1200', description: 'Building foundations' },
-          { label: '1200 - 1400', value: '1200_1400', description: 'Making progress' },
-          { label: '1400 - 1500', value: '1400_1500', description: 'Strong scorer' },
-          { label: '1500+', value: '1500_plus', description: 'Top performer' },
+          { label: 'Other / International', value: 'other', emoji: '🌏' },
         ])
     );
 
@@ -782,20 +712,20 @@ function createScoreSelect() {
 function createGradeSelect() {
   const embed = new EmbedBuilder()
     .setColor('#3498DB')
-    .setTitle('Step 3 of 3: What grade are you in?')
-    .setDescription('Select your current grade level.');
+    .setTitle('🎒 Step 2 of 2: What grade are you in?')
+    .setDescription('This helps us connect you with peers at the same stage!');
 
   const select = new ActionRowBuilder()
     .addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('select_grade')
-        .setPlaceholder('🎒 Select your grade level')
+        .setPlaceholder('Select your grade level')
         .addOptions([
-          { label: 'Freshman (Grade 9)', value: 'freshman' },
-          { label: 'Sophomore (Grade 10)', value: 'sophomore' },
-          { label: 'Junior (Grade 11)', value: 'junior' },
-          { label: 'Senior (Grade 12)', value: 'senior' },
-          { label: 'Gap Year / Other', value: 'gap_year' },
+          { label: 'Freshman (Grade 9)', value: 'freshman', emoji: '📗' },
+          { label: 'Sophomore (Grade 10)', value: 'sophomore', emoji: '📘' },
+          { label: 'Junior (Grade 11)', value: 'junior', emoji: '📙' },
+          { label: 'Senior (Grade 12)', value: 'senior', emoji: '📕' },
+          { label: 'Gap Year / Other', value: 'gap_year', emoji: '📓' },
         ])
     );
 
@@ -807,6 +737,8 @@ function createRulesAcceptance() {
     .setColor('#E74C3C')
     .setTitle('📜 Almost done! Accept the rules')
     .setDescription(`
+Please read and agree to our community rules:
+
 **1. Be Respectful** - No harassment or hate speech
 **2. No Spam** - Keep it clean
 **3. Stay On Topic** - Use the right channels
@@ -833,16 +765,17 @@ By clicking "I Accept", you agree to follow these rules.
 function createCompletionMessage() {
   const embed = new EmbedBuilder()
     .setColor('#2ECC71')
-    .setTitle('🎉 Onboarding Complete!')
+    .setTitle('🎉 You\'re all set!')
     .setDescription(`
-Welcome to the **Lumist.ai** community!
+Welcome to the **Lumist.ai** community! You now have full access.
 
-📝 **Introduce yourself** in #introductions
-📚 **Check out** the study channels
-🔗 **Link your Lumist.ai account** in #verify
-💬 **Say hi** in #general
+**What to do next:**
+📝 Introduce yourself in **#introductions**
+📚 Check out the **SAT study channels**
+🔗 Link your Lumist.ai account in **#verify** to appear on leaderboards
+💬 Say hi in **#general**
 
-See you around! 🚀
+Good luck on your SAT journey! 🚀
     `);
 
   return { embeds: [embed], components: [] };
@@ -853,22 +786,20 @@ See you around! 🚀
 // ============================================
 client.once(Events.ClientReady, async () => {
   console.log('═══════════════════════════════════════════════════════');
-  console.log(`🤖 Lumist Bot v3.0 is online!`);
+  console.log(`🦊 Lumi Bot v3.1 is online!`);
   console.log(`   Logged in as: ${client.user.tag}`);
   console.log(`   Serving guild: ${GUILD_ID}`);
   console.log(`   Started at: ${new Date().toISOString()}`);
   console.log('═══════════════════════════════════════════════════════');
   
-  // Register slash commands
   await registerCommands();
   
   console.log('');
   console.log('📋 Active features:');
-  console.log('   • Onboarding system');
+  console.log('   • Onboarding (Nationality → Grade → Rules)');
   console.log('   • Auto-moderation');
   console.log('   • Slash commands');
   console.log('   • Ticket system');
-  console.log('   • Warning system');
   console.log('');
 });
 
@@ -898,8 +829,11 @@ client.on(Events.GuildMemberAdd, async (member) => {
     }
   }
   
+  // Simplified state - no score
   onboardingState.set(member.user.id, {
-    nationality: null, score: null, grade: null, guildId: member.guild.id,
+    nationality: null,
+    grade: null,
+    guildId: member.guild.id,
   });
   
   try {
@@ -911,7 +845,7 @@ client.on(Events.GuildMemberAdd, async (member) => {
     if (welcomeChannel) {
       const fallbackEmbed = new EmbedBuilder()
         .setColor('#FFA500')
-        .setDescription(`Hey ${member}! I couldn't send you a DM. Click the button below to start onboarding.`);
+        .setDescription(`Hey ${member}! 🦊 I couldn't send you a DM.\n\n**Please enable DMs from server members**, then click the button below to start onboarding.`);
       const button = new ActionRowBuilder()
         .addComponents(new ButtonBuilder().setCustomId('start_onboarding').setLabel('🚀 Start Onboarding').setStyle(ButtonStyle.Primary));
       await welcomeChannel.send({ embeds: [fallbackEmbed], components: [button] });
@@ -957,121 +891,87 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isChatInputCommand()) {
     const { commandName, options } = interaction;
     
-    // /warn
     if (commandName === 'warn') {
       const user = options.getUser('user');
       const reason = options.getString('reason');
       const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-      
-      if (!member) {
-        return interaction.reply({ content: '❌ User not found in this server.', ephemeral: true });
-      }
-      
+      if (!member) return interaction.reply({ content: '❌ User not found.', ephemeral: true });
       const warningCount = addWarning(user.id, reason, interaction.user.tag);
       await logModAction(interaction.guild, 'Warning Issued', user, interaction.user, `${reason} (Warning #${warningCount})`, '#FFA500');
-      
       await member.send(`⚠️ **Warning from Lumist.ai Server**\nReason: ${reason}\nModerator: ${interaction.user.tag}\n\nThis is warning #${warningCount}.`).catch(() => {});
-      
       await interaction.reply({ content: `✅ Warned **${user.tag}** (Warning #${warningCount})\nReason: ${reason}`, ephemeral: true });
     }
     
-    // /mute
     if (commandName === 'mute') {
       const user = options.getUser('user');
       const duration = options.getInteger('duration');
       const reason = options.getString('reason') || 'No reason provided';
       const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-      
-      if (!member) {
-        return interaction.reply({ content: '❌ User not found.', ephemeral: true });
-      }
-      
+      if (!member) return interaction.reply({ content: '❌ User not found.', ephemeral: true });
       try {
         await member.timeout(duration * 60 * 1000, reason);
         await logModAction(interaction.guild, `Muted (${duration} min)`, user, interaction.user, reason, '#E67E22');
-        await interaction.reply({ content: `✅ Muted **${user.tag}** for ${duration} minutes.\nReason: ${reason}`, ephemeral: true });
+        await interaction.reply({ content: `✅ Muted **${user.tag}** for ${duration} minutes.`, ephemeral: true });
       } catch (error) {
-        await interaction.reply({ content: `❌ Failed to mute: ${error.message}`, ephemeral: true });
+        await interaction.reply({ content: `❌ Failed: ${error.message}`, ephemeral: true });
       }
     }
     
-    // /unmute
     if (commandName === 'unmute') {
       const user = options.getUser('user');
       const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-      
-      if (!member) {
-        return interaction.reply({ content: '❌ User not found.', ephemeral: true });
-      }
-      
+      if (!member) return interaction.reply({ content: '❌ User not found.', ephemeral: true });
       try {
         await member.timeout(null);
         await logModAction(interaction.guild, 'Unmuted', user, interaction.user, 'Manual unmute', '#2ECC71');
         await interaction.reply({ content: `✅ Unmuted **${user.tag}**.`, ephemeral: true });
       } catch (error) {
-        await interaction.reply({ content: `❌ Failed to unmute: ${error.message}`, ephemeral: true });
+        await interaction.reply({ content: `❌ Failed: ${error.message}`, ephemeral: true });
       }
     }
     
-    // /kick
     if (commandName === 'kick') {
       const user = options.getUser('user');
       const reason = options.getString('reason') || 'No reason provided';
       const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-      
-      if (!member) {
-        return interaction.reply({ content: '❌ User not found.', ephemeral: true });
-      }
-      
+      if (!member) return interaction.reply({ content: '❌ User not found.', ephemeral: true });
       try {
         await member.send(`👢 **You have been kicked from Lumist.ai**\nReason: ${reason}`).catch(() => {});
         await member.kick(reason);
         await logModAction(interaction.guild, 'Kicked', user, interaction.user, reason, '#E74C3C');
-        await interaction.reply({ content: `✅ Kicked **${user.tag}**.\nReason: ${reason}`, ephemeral: true });
+        await interaction.reply({ content: `✅ Kicked **${user.tag}**.`, ephemeral: true });
       } catch (error) {
-        await interaction.reply({ content: `❌ Failed to kick: ${error.message}`, ephemeral: true });
+        await interaction.reply({ content: `❌ Failed: ${error.message}`, ephemeral: true });
       }
     }
     
-    // /ban
     if (commandName === 'ban') {
       const user = options.getUser('user');
       const reason = options.getString('reason') || 'No reason provided';
       const days = options.getInteger('days') || 0;
-      
       try {
         await user.send(`🚫 **You have been banned from Lumist.ai**\nReason: ${reason}`).catch(() => {});
         await interaction.guild.members.ban(user.id, { deleteMessageSeconds: days * 86400, reason });
         await logModAction(interaction.guild, 'Banned', user, interaction.user, reason, '#992D22');
-        await interaction.reply({ content: `✅ Banned **${user.tag}**.\nReason: ${reason}`, ephemeral: true });
+        await interaction.reply({ content: `✅ Banned **${user.tag}**.`, ephemeral: true });
       } catch (error) {
-        await interaction.reply({ content: `❌ Failed to ban: ${error.message}`, ephemeral: true });
+        await interaction.reply({ content: `❌ Failed: ${error.message}`, ephemeral: true });
       }
     }
     
-    // /warnings
     if (commandName === 'warnings') {
       const user = options.getUser('user');
       const warnings = getWarnings(user.id);
-      
-      if (warnings.length === 0) {
-        return interaction.reply({ content: `✅ **${user.tag}** has no active warnings.`, ephemeral: true });
-      }
-      
-      const warningList = warnings.map((w, i) => 
-        `**#${i + 1}** - ${new Date(w.timestamp).toLocaleDateString()}\nReason: ${w.reason}\nBy: ${w.moderator}`
-      ).join('\n\n');
-      
+      if (warnings.length === 0) return interaction.reply({ content: `✅ **${user.tag}** has no active warnings.`, ephemeral: true });
+      const warningList = warnings.map((w, i) => `**#${i + 1}** - ${new Date(w.timestamp).toLocaleDateString()}\nReason: ${w.reason}\nBy: ${w.moderator}`).join('\n\n');
       const embed = new EmbedBuilder()
         .setColor('#FFA500')
         .setTitle(`⚠️ Warnings for ${user.tag}`)
         .setDescription(warningList)
-        .setFooter({ text: `Total: ${warnings.length} warning(s) | Warnings expire after ${AUTOMOD_CONFIG.warnings.expireDays} days` });
-      
+        .setFooter({ text: `Total: ${warnings.length} | Expire after ${AUTOMOD_CONFIG.warnings.expireDays} days` });
       await interaction.reply({ embeds: [embed], ephemeral: true });
     }
     
-    // /clearwarnings
     if (commandName === 'clearwarnings') {
       const user = options.getUser('user');
       clearWarnings(user.id);
@@ -1079,69 +979,60 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({ content: `✅ Cleared all warnings for **${user.tag}**.`, ephemeral: true });
     }
     
-    // /purge
     if (commandName === 'purge') {
       const amount = options.getInteger('amount');
       const targetUser = options.getUser('user');
-      
       try {
         let messages = await interaction.channel.messages.fetch({ limit: amount + 1 });
-        
-        if (targetUser) {
-          messages = messages.filter(m => m.author.id === targetUser.id);
-        }
-        
+        if (targetUser) messages = messages.filter(m => m.author.id === targetUser.id);
         const deleted = await interaction.channel.bulkDelete(messages.first(amount), true);
         await interaction.reply({ content: `✅ Deleted ${deleted.size} messages.`, ephemeral: true });
       } catch (error) {
-        await interaction.reply({ content: `❌ Failed to purge: ${error.message}`, ephemeral: true });
+        await interaction.reply({ content: `❌ Failed: ${error.message}`, ephemeral: true });
       }
     }
     
-    // /ticket
     if (commandName === 'ticket') {
       await interaction.reply(createTicketCategorySelect());
     }
     
-    // /close
     if (commandName === 'close') {
       if (!interaction.channel.name.startsWith('ticket-')) {
         return interaction.reply({ content: '❌ This command can only be used in ticket channels.', ephemeral: true });
       }
-      
       await interaction.reply({ content: '🔒 Closing ticket...', ephemeral: true });
       await closeTicket(interaction.channel, interaction.user);
     }
     
-    // /setuptickets
     if (commandName === 'setuptickets') {
       await interaction.channel.send(createTicketEmbed());
-      await interaction.reply({ content: '✅ Ticket system set up in this channel!', ephemeral: true });
+      await interaction.reply({ content: '✅ Ticket system set up!', ephemeral: true });
     }
   }
   
   // ---- BUTTONS ----
   if (interaction.isButton()) {
-    // Onboarding start
     if (interaction.customId === 'start_onboarding') {
       if (!onboardingState.has(interaction.user.id)) {
-        onboardingState.set(interaction.user.id, { nationality: null, score: null, grade: null, guildId: GUILD_ID });
+        onboardingState.set(interaction.user.id, { nationality: null, grade: null, guildId: GUILD_ID });
       }
       await interaction.update(createNationalitySelect());
     }
     
-    // Accept rules
     if (interaction.customId === 'accept_rules') {
       const state = onboardingState.get(interaction.user.id);
-      if (!state) {
-        return interaction.reply({ content: '❌ Something went wrong. Please try again.', ephemeral: true });
-      }
+      if (!state) return interaction.reply({ content: '❌ Something went wrong. Please try again.', ephemeral: true });
       
       try {
         const guild = await client.guilds.fetch(state.guildId || GUILD_ID);
         const member = await guild.members.fetch(interaction.user.id);
         
-        const rolesToAssign = [ROLES.MEMBER, getNationalityRole(state.nationality), getScoreRole(state.score), getGradeRole(state.grade)];
+        // Only assign: Member, Nationality, Grade (no score)
+        const rolesToAssign = [
+          ROLES.MEMBER,
+          getNationalityRole(state.nationality),
+          getGradeRole(state.grade),
+        ];
         
         for (const roleName of rolesToAssign) {
           if (roleName) {
@@ -1169,12 +1060,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
     }
     
-    // Create ticket button
     if (interaction.customId === 'create_ticket') {
       await interaction.reply(createTicketCategorySelect());
     }
     
-    // Close ticket button
     if (interaction.customId === 'close_ticket') {
       await interaction.reply({ content: '🔒 Closing ticket...', ephemeral: true });
       await closeTicket(interaction.channel, interaction.user);
@@ -1183,17 +1072,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
   
   // ---- SELECT MENUS ----
   if (interaction.isStringSelectMenu()) {
-    // Onboarding selects
-    const state = onboardingState.get(interaction.user.id) || { nationality: null, score: null, grade: null, guildId: GUILD_ID };
+    const state = onboardingState.get(interaction.user.id) || { nationality: null, grade: null, guildId: GUILD_ID };
     
+    // Simplified flow: Nationality → Grade → Rules
     if (interaction.customId === 'select_nationality') {
       state.nationality = interaction.values[0];
-      onboardingState.set(interaction.user.id, state);
-      await interaction.update(createScoreSelect());
-    }
-    
-    if (interaction.customId === 'select_score') {
-      state.score = interaction.values[0];
       onboardingState.set(interaction.user.id, state);
       await interaction.update(createGradeSelect());
     }
@@ -1204,11 +1087,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.update(createRulesAcceptance());
     }
     
-    // Ticket category select
     if (interaction.customId === 'ticket_category') {
       const category = interaction.values[0];
       const result = await createTicketChannel(interaction.guild, interaction.user, category);
-      
       if (result.error) {
         await interaction.update({ content: `❌ ${result.error}`, embeds: [], components: [], ephemeral: true });
       } else {
