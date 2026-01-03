@@ -1,14 +1,11 @@
 {
   "name": "lumist-discord-bot",
-  "version": "1.0.0",
-  "description": "Lumist.ai Discord Bot - Onboarding System",
+  "version": "3.1.0",
+  "description": "Lumist.ai Discord Bot - Simplified onboarding, auto-mod, tickets",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
-  "keywords": ["discord", "bot", "lumist", "sat"],
-  "author": "Lumist.ai",
-  "license": "MIT",
   "dependencies": {
     "discord.js": "^14.14.1"
   },
