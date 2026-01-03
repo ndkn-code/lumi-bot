@@ -1,12 +1,13 @@
 /**
- * Lumist.ai Discord Bot
+ * Lumist.ai Discord Bot v3.0
  * 
  * Features:
- * - Onboarding system with questionnaire
- * - Auto-moderation (spam, links, banned words, raids)
- * - Warning system with escalation
+ * - Onboarding system
+ * - Auto-moderation
+ * - Slash commands for mods
+ * - Ticket system
+ * - Warning system
  * - Mod logging
- * - Health check endpoint for uptime monitoring
  */
 
 const {
@@ -19,7 +20,13 @@ const {
   StringSelectMenuBuilder,
   Events,
   PermissionFlagsBits,
-  AuditLogEvent,
+  SlashCommandBuilder,
+  REST,
+  Routes,
+  ChannelType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } = require('discord.js');
 
 const http = require('http');
@@ -40,81 +47,52 @@ if (!BOT_TOKEN) {
 // AUTO-MOD CONFIGURATION
 // ============================================
 const AUTOMOD_CONFIG = {
-  // Spam detection
   spam: {
     enabled: true,
-    maxMessages: 5,        // Max messages allowed
-    timeWindow: 5000,      // Within this time (ms)
-    muteMinutes: 10,       // Mute duration for spam
+    maxMessages: 5,
+    timeWindow: 5000,
+    muteMinutes: 10,
   },
-  
-  // Mention spam
   mentions: {
     enabled: true,
-    maxMentions: 5,        // Max mentions per message
+    maxMentions: 5,
   },
-  
-  // Duplicate messages
   duplicates: {
     enabled: true,
-    maxDuplicates: 3,      // Same message X times = warning
-    timeWindow: 60000,     // Within this time (ms)
+    maxDuplicates: 3,
+    timeWindow: 60000,
   },
-  
-  // URL allowlist
   links: {
     enabled: true,
     allowedDomains: [
-      'lumist.ai',
-      'www.lumist.ai',
-      'app.lumist.ai',
-      'collegeboard.org',
-      'www.collegeboard.org',
-      'khanacademy.org',
-      'www.khanacademy.org',
-      'youtube.com',
-      'www.youtube.com',
-      'youtu.be',
-      'discord.com',
-      'discord.gg',
-      'imgur.com',
-      'i.imgur.com',
-      'gyazo.com',
-      'tenor.com',
-      'giphy.com',
+      'lumist.ai', 'www.lumist.ai', 'app.lumist.ai',
+      'collegeboard.org', 'www.collegeboard.org',
+      'khanacademy.org', 'www.khanacademy.org',
+      'youtube.com', 'www.youtube.com', 'youtu.be',
+      'discord.com', 'discord.gg',
+      'imgur.com', 'i.imgur.com',
+      'gyazo.com', 'tenor.com', 'giphy.com',
     ],
   },
-  
-  // Banned words (add more as needed)
   bannedWords: {
     enabled: true,
-    words: [
-      // Add banned words/slurs here
-      // Example: 'badword1', 'badword2'
-    ],
-    // Regex patterns for more complex filtering
-    patterns: [
-      // Example: /n[i1!|]gg[e3]r/gi
-    ],
+    words: [],
+    patterns: [],
   },
-  
-  // Raid protection
   raid: {
     enabled: true,
-    joinThreshold: 10,     // X joins within timeWindow = raid
-    timeWindow: 60000,     // 1 minute
-    lockdownMinutes: 5,    // Auto-lockdown duration
+    joinThreshold: 10,
+    timeWindow: 60000,
+    lockdownMinutes: 5,
   },
-  
-  // Warning escalation
   warnings: {
-    expireDays: 30,        // Warnings expire after X days
+    expireDays: 30,
     escalation: {
-      1: 'warn',           // 1st warning: just warn
-      2: 'mute_1h',        // 2nd warning: 1 hour mute
-      3: 'mute_24h',       // 3rd warning: 24 hour mute
-      4: 'ban_7d',         // 4th warning: 7 day ban
-      5: 'ban_permanent',  // 5th warning: permanent ban
+      1: 'warn',
+      2: 'mute_1h',
+      3: 'mute_24h',
+      4: 'ban_7d',
+      5: 'ban_permanent',
     },
   },
 };
@@ -125,7 +103,8 @@ const CHANNELS = {
   WELCOME: 'welcome',
   RULES: 'rules',
   MOD_LOGS: 'mod-logs',
-  STAFF_CHAT: 'staff-chat',
+  SUPPORT_TICKETS: 'support-tickets',
+  TICKET_TRANSCRIPTS: 'ticket-transcripts',
 };
 
 // Roles
@@ -136,7 +115,6 @@ const ROLES = {
   MODERATOR: '🛡️ Moderator',
   ADMIN: '⚙️ Admin',
   FOUNDER: '👑 Founder',
-  // Nationality
   VIETNAM: '🇻🇳 Vietnam',
   USA: '🇺🇸 United States',
   UK: '🇬🇧 United Kingdom',
@@ -146,13 +124,11 @@ const ROLES = {
   CHINA: '🇨🇳 China',
   INDIA: '🇮🇳 India',
   OTHER: '🌏 Other International',
-  // Score ranges
   SCORE_BELOW_1000: '📊 Below 1000',
   SCORE_1000_1200: '📊 1000-1200',
   SCORE_1200_1400: '📊 1200-1400',
   SCORE_1400_1500: '📊 1400-1500',
   SCORE_1500_PLUS: '📊 1500+',
-  // Grade levels
   FRESHMAN: '🎒 Freshman',
   SOPHOMORE: '🎒 Sophomore',
   JUNIOR: '🎒 Junior',
@@ -200,11 +176,101 @@ const client = new Client({
 // DATA STORES
 // ============================================
 const onboardingState = new Map();
-const messageHistory = new Map();      // For spam detection
-const duplicateHistory = new Map();    // For duplicate detection
-const joinHistory = [];                // For raid detection
-const userWarnings = new Map();        // Warning tracking
+const messageHistory = new Map();
+const duplicateHistory = new Map();
+const joinHistory = [];
+const userWarnings = new Map();
+const activeTickets = new Map();
 let isRaidMode = false;
+
+// ============================================
+// SLASH COMMANDS DEFINITION
+// ============================================
+const commands = [
+  new SlashCommandBuilder()
+    .setName('warn')
+    .setDescription('Issue a warning to a user')
+    .addUserOption(option => option.setName('user').setDescription('User to warn').setRequired(true))
+    .addStringOption(option => option.setName('reason').setDescription('Reason for warning').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  
+  new SlashCommandBuilder()
+    .setName('mute')
+    .setDescription('Mute a user')
+    .addUserOption(option => option.setName('user').setDescription('User to mute').setRequired(true))
+    .addIntegerOption(option => option.setName('duration').setDescription('Duration in minutes').setRequired(true).setMinValue(1).setMaxValue(40320))
+    .addStringOption(option => option.setName('reason').setDescription('Reason for mute'))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  
+  new SlashCommandBuilder()
+    .setName('unmute')
+    .setDescription('Unmute a user')
+    .addUserOption(option => option.setName('user').setDescription('User to unmute').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  
+  new SlashCommandBuilder()
+    .setName('kick')
+    .setDescription('Kick a user from the server')
+    .addUserOption(option => option.setName('user').setDescription('User to kick').setRequired(true))
+    .addStringOption(option => option.setName('reason').setDescription('Reason for kick'))
+    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
+  
+  new SlashCommandBuilder()
+    .setName('ban')
+    .setDescription('Ban a user from the server')
+    .addUserOption(option => option.setName('user').setDescription('User to ban').setRequired(true))
+    .addStringOption(option => option.setName('reason').setDescription('Reason for ban'))
+    .addIntegerOption(option => option.setName('days').setDescription('Days of messages to delete (0-7)').setMinValue(0).setMaxValue(7))
+    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
+  
+  new SlashCommandBuilder()
+    .setName('warnings')
+    .setDescription('Check warnings for a user')
+    .addUserOption(option => option.setName('user').setDescription('User to check').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  
+  new SlashCommandBuilder()
+    .setName('clearwarnings')
+    .setDescription('Clear all warnings for a user')
+    .addUserOption(option => option.setName('user').setDescription('User to clear warnings for').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  
+  new SlashCommandBuilder()
+    .setName('purge')
+    .setDescription('Delete multiple messages')
+    .addIntegerOption(option => option.setName('amount').setDescription('Number of messages to delete (1-100)').setRequired(true).setMinValue(1).setMaxValue(100))
+    .addUserOption(option => option.setName('user').setDescription('Only delete messages from this user'))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+  
+  new SlashCommandBuilder()
+    .setName('ticket')
+    .setDescription('Create a support ticket'),
+  
+  new SlashCommandBuilder()
+    .setName('close')
+    .setDescription('Close the current ticket')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+  
+  new SlashCommandBuilder()
+    .setName('setuptickets')
+    .setDescription('Set up the ticket system in the current channel')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+].map(command => command.toJSON());
+
+// ============================================
+// REGISTER SLASH COMMANDS
+// ============================================
+async function registerCommands() {
+  const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+  
+  try {
+    console.log('📝 Registering slash commands...');
+    await rest.put(Routes.applicationGuildCommands(client.user.id, GUILD_ID), { body: commands });
+    console.log('✅ Slash commands registered!');
+  } catch (error) {
+    console.error('❌ Error registering commands:', error);
+  }
+}
 
 // ============================================
 // HELPER FUNCTIONS
@@ -226,25 +292,17 @@ function isStaff(member) {
 
 function getNationalityRole(value) {
   const map = {
-    'vietnam': ROLES.VIETNAM,
-    'usa': ROLES.USA,
-    'uk': ROLES.UK,
-    'singapore': ROLES.SINGAPORE,
-    'korea': ROLES.KOREA,
-    'japan': ROLES.JAPAN,
-    'china': ROLES.CHINA,
-    'india': ROLES.INDIA,
-    'other': ROLES.OTHER,
+    'vietnam': ROLES.VIETNAM, 'usa': ROLES.USA, 'uk': ROLES.UK,
+    'singapore': ROLES.SINGAPORE, 'korea': ROLES.KOREA, 'japan': ROLES.JAPAN,
+    'china': ROLES.CHINA, 'india': ROLES.INDIA, 'other': ROLES.OTHER,
   };
   return map[value];
 }
 
 function getScoreRole(value) {
   const map = {
-    'below_1000': ROLES.SCORE_BELOW_1000,
-    '1000_1200': ROLES.SCORE_1000_1200,
-    '1200_1400': ROLES.SCORE_1200_1400,
-    '1400_1500': ROLES.SCORE_1400_1500,
+    'below_1000': ROLES.SCORE_BELOW_1000, '1000_1200': ROLES.SCORE_1000_1200,
+    '1200_1400': ROLES.SCORE_1200_1400, '1400_1500': ROLES.SCORE_1400_1500,
     '1500_plus': ROLES.SCORE_1500_PLUS,
   };
   return map[value];
@@ -252,11 +310,8 @@ function getScoreRole(value) {
 
 function getGradeRole(value) {
   const map = {
-    'freshman': ROLES.FRESHMAN,
-    'sophomore': ROLES.SOPHOMORE,
-    'junior': ROLES.JUNIOR,
-    'senior': ROLES.SENIOR,
-    'gap_year': ROLES.GAP_YEAR,
+    'freshman': ROLES.FRESHMAN, 'sophomore': ROLES.SOPHOMORE,
+    'junior': ROLES.JUNIOR, 'senior': ROLES.SENIOR, 'gap_year': ROLES.GAP_YEAR,
   };
   return map[value];
 }
@@ -285,21 +340,29 @@ async function logModAction(guild, action, target, moderator, reason, color = '#
 // ============================================
 // WARNING SYSTEM
 // ============================================
-function getWarningCount(userId) {
+function getWarnings(userId) {
   const warnings = userWarnings.get(userId) || [];
   const now = Date.now();
   const validWarnings = warnings.filter(w => 
     now - w.timestamp < AUTOMOD_CONFIG.warnings.expireDays * 24 * 60 * 60 * 1000
   );
   userWarnings.set(userId, validWarnings);
-  return validWarnings.length;
+  return validWarnings;
 }
 
-function addWarning(userId, reason) {
+function getWarningCount(userId) {
+  return getWarnings(userId).length;
+}
+
+function addWarning(userId, reason, moderator = 'Auto-Mod') {
   const warnings = userWarnings.get(userId) || [];
-  warnings.push({ timestamp: Date.now(), reason });
+  warnings.push({ timestamp: Date.now(), reason, moderator });
   userWarnings.set(userId, warnings);
   return warnings.length;
+}
+
+function clearWarnings(userId) {
+  userWarnings.delete(userId);
 }
 
 async function executeWarningAction(member, warningCount, reason, guild) {
@@ -311,33 +374,27 @@ async function executeWarningAction(member, warningCount, reason, guild) {
         await member.send(`⚠️ **Warning from Lumist.ai Server**\nReason: ${reason}\n\nThis is warning #${warningCount}. Please follow the server rules.`).catch(() => {});
         await logModAction(guild, 'Warning Issued', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#FFA500');
         break;
-        
       case 'mute_1h':
         await member.timeout(60 * 60 * 1000, reason);
         await member.send(`🔇 **You have been muted for 1 hour**\nReason: ${reason}\n\nThis is warning #${warningCount}.`).catch(() => {});
         await logModAction(guild, 'Muted (1 hour)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#E67E22');
         break;
-        
       case 'mute_24h':
         await member.timeout(24 * 60 * 60 * 1000, reason);
         await member.send(`🔇 **You have been muted for 24 hours**\nReason: ${reason}\n\nThis is warning #${warningCount}.`).catch(() => {});
         await logModAction(guild, 'Muted (24 hours)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#E74C3C');
         break;
-        
       case 'ban_7d':
-        await member.send(`🚫 **You have been banned for 7 days**\nReason: ${reason}\n\nThis is warning #${warningCount}.`).catch(() => {});
+        await member.send(`🚫 **You have been banned for 7 days**\nReason: ${reason}`).catch(() => {});
         await member.ban({ deleteMessageSeconds: 86400, reason: `${reason} (Warning #${warningCount})` });
         await logModAction(guild, 'Banned (7 days)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#992D22');
-        // Note: 7-day ban requires manual unban or a scheduled task
         break;
-        
       case 'ban_permanent':
-        await member.send(`🚫 **You have been permanently banned**\nReason: ${reason}\n\nThis was warning #${warningCount}.`).catch(() => {});
+        await member.send(`🚫 **You have been permanently banned**\nReason: ${reason}`).catch(() => {});
         await member.ban({ deleteMessageSeconds: 86400, reason: `${reason} (Warning #${warningCount})` });
         await logModAction(guild, 'Banned (Permanent)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#1a1a1a');
         break;
     }
-    
     console.log(`⚠️ Warning #${warningCount} issued to ${member.user.tag}: ${action}`);
   } catch (error) {
     console.error(`❌ Error executing warning action: ${error.message}`);
@@ -347,83 +404,54 @@ async function executeWarningAction(member, warningCount, reason, guild) {
 // ============================================
 // AUTO-MOD CHECKS
 // ============================================
-
-// Check for spam
 function checkSpam(message) {
   if (!AUTOMOD_CONFIG.spam.enabled) return false;
-  
   const userId = message.author.id;
   const now = Date.now();
-  
   const history = messageHistory.get(userId) || [];
   history.push(now);
-  
-  // Keep only recent messages
   const recentMessages = history.filter(t => now - t < AUTOMOD_CONFIG.spam.timeWindow);
   messageHistory.set(userId, recentMessages);
-  
   return recentMessages.length > AUTOMOD_CONFIG.spam.maxMessages;
 }
 
-// Check for duplicate messages
 function checkDuplicates(message) {
   if (!AUTOMOD_CONFIG.duplicates.enabled) return false;
-  
   const userId = message.author.id;
   const content = message.content.toLowerCase().trim();
   const now = Date.now();
-  
-  if (content.length < 5) return false; // Ignore very short messages
-  
+  if (content.length < 5) return false;
   const history = duplicateHistory.get(userId) || [];
   history.push({ content, timestamp: now });
-  
-  // Keep only recent messages
   const recentMessages = history.filter(m => now - m.timestamp < AUTOMOD_CONFIG.duplicates.timeWindow);
   duplicateHistory.set(userId, recentMessages);
-  
-  // Count duplicates
   const duplicateCount = recentMessages.filter(m => m.content === content).length;
   return duplicateCount >= AUTOMOD_CONFIG.duplicates.maxDuplicates;
 }
 
-// Check for mention spam
 function checkMentionSpam(message) {
   if (!AUTOMOD_CONFIG.mentions.enabled) return false;
-  
   const mentionCount = message.mentions.users.size + message.mentions.roles.size;
   return mentionCount > AUTOMOD_CONFIG.mentions.maxMentions;
 }
 
-// Check for banned words
 function checkBannedWords(message) {
   if (!AUTOMOD_CONFIG.bannedWords.enabled) return false;
-  
   const content = message.content.toLowerCase();
-  
-  // Check word list
   for (const word of AUTOMOD_CONFIG.bannedWords.words) {
     if (content.includes(word.toLowerCase())) return true;
   }
-  
-  // Check patterns
   for (const pattern of AUTOMOD_CONFIG.bannedWords.patterns) {
     if (pattern.test(content)) return true;
   }
-  
   return false;
 }
 
-// Check for unapproved links
 function checkLinks(message) {
   if (!AUTOMOD_CONFIG.links.enabled) return false;
-  
-  // URL regex
   const urlRegex = /https?:\/\/([^\s<]+)/gi;
   const matches = message.content.match(urlRegex);
-  
   if (!matches) return false;
-  
   for (const url of matches) {
     try {
       const hostname = new URL(url).hostname.toLowerCase();
@@ -432,11 +460,9 @@ function checkLinks(message) {
       );
       if (!isAllowed) return true;
     } catch {
-      // Invalid URL, might be suspicious
       return true;
     }
   }
-  
   return false;
 }
 
@@ -445,47 +471,226 @@ function checkLinks(message) {
 // ============================================
 function checkForRaid() {
   if (!AUTOMOD_CONFIG.raid.enabled) return false;
-  
   const now = Date.now();
   const recentJoins = joinHistory.filter(t => now - t < AUTOMOD_CONFIG.raid.timeWindow);
-  
   return recentJoins.length >= AUTOMOD_CONFIG.raid.joinThreshold;
 }
 
 async function enableRaidMode(guild) {
   if (isRaidMode) return;
-  
   isRaidMode = true;
   console.log('🚨 RAID MODE ENABLED');
   
-  // Log to mod channel
   const modLogChannel = await findChannel(guild, CHANNELS.MOD_LOGS);
   if (modLogChannel) {
     const embed = new EmbedBuilder()
       .setColor('#FF0000')
       .setTitle('🚨 RAID DETECTED - LOCKDOWN ENABLED')
-      .setDescription(`Detected ${AUTOMOD_CONFIG.raid.joinThreshold}+ joins within ${AUTOMOD_CONFIG.raid.timeWindow / 1000} seconds.\n\nNew members will be automatically kicked for ${AUTOMOD_CONFIG.raid.lockdownMinutes} minutes.`)
+      .setDescription(`Detected ${AUTOMOD_CONFIG.raid.joinThreshold}+ joins within ${AUTOMOD_CONFIG.raid.timeWindow / 1000} seconds.`)
       .setTimestamp();
-    
-    await modLogChannel.send({ content: '<@&' + (await findRole(guild, ROLES.MODERATOR))?.id + '>', embeds: [embed] });
+    await modLogChannel.send({ embeds: [embed] });
   }
   
-  // Auto-disable after timeout
-  setTimeout(() => {
+  setTimeout(async () => {
     isRaidMode = false;
     console.log('✅ Raid mode disabled');
-    
     if (modLogChannel) {
       modLogChannel.send({
         embeds: [new EmbedBuilder()
           .setColor('#2ECC71')
           .setTitle('✅ Raid Mode Disabled')
-          .setDescription('Lockdown has been lifted. New members can join normally.')
           .setTimestamp()
         ]
       });
     }
   }, AUTOMOD_CONFIG.raid.lockdownMinutes * 60 * 1000);
+}
+
+// ============================================
+// TICKET SYSTEM
+// ============================================
+function createTicketEmbed() {
+  const embed = new EmbedBuilder()
+    .setColor('#3498DB')
+    .setTitle('🎫 Support Tickets')
+    .setDescription(`
+Need help? Create a support ticket!
+
+**Ticket Categories:**
+• 💬 **General Support** - Questions about the server or community
+• 🐛 **Bug Report** - Report issues with Lumist.ai platform
+• 🎓 **Alumni Verification** - Verify your SAT score and university
+
+Click the button below to open a ticket.
+    `)
+    .setFooter({ text: 'Lumist.ai Support' });
+
+  const buttons = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('create_ticket')
+        .setLabel('🎫 Create Ticket')
+        .setStyle(ButtonStyle.Primary)
+    );
+
+  return { embeds: [embed], components: [buttons] };
+}
+
+function createTicketCategorySelect() {
+  const embed = new EmbedBuilder()
+    .setColor('#3498DB')
+    .setTitle('Select Ticket Category')
+    .setDescription('What do you need help with?');
+
+  const select = new ActionRowBuilder()
+    .addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('ticket_category')
+        .setPlaceholder('Select a category')
+        .addOptions([
+          { label: 'General Support', value: 'general', emoji: '💬', description: 'Questions about the server' },
+          { label: 'Bug Report', value: 'bug', emoji: '🐛', description: 'Report platform issues' },
+          { label: 'Alumni Verification', value: 'alumni', emoji: '🎓', description: 'Verify your credentials' },
+        ])
+    );
+
+  return { embeds: [embed], components: [select], ephemeral: true };
+}
+
+async function createTicketChannel(guild, user, category) {
+  // Check if user already has an open ticket
+  if (activeTickets.has(user.id)) {
+    return { error: `You already have an open ticket: <#${activeTickets.get(user.id)}>` };
+  }
+
+  const categoryEmoji = { general: '💬', bug: '🐛', alumni: '🎓' };
+  const categoryName = { general: 'General Support', bug: 'Bug Report', alumni: 'Alumni Verification' };
+  
+  const ticketNumber = Date.now().toString(36).slice(-4).toUpperCase();
+  const channelName = `ticket-${ticketNumber}-${user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '');
+
+  try {
+    // Find staff roles
+    const modRole = await findRole(guild, ROLES.MODERATOR);
+    const adminRole = await findRole(guild, ROLES.ADMIN);
+    const founderRole = await findRole(guild, ROLES.FOUNDER);
+
+    // Create ticket channel
+    const ticketChannel = await guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildText,
+      topic: `Ticket by ${user.tag} | Category: ${categoryName[category]} | Created: ${new Date().toISOString()}`,
+      permissionOverwrites: [
+        { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+        { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels] },
+        ...(modRole ? [{ id: modRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] }] : []),
+        ...(adminRole ? [{ id: adminRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels] }] : []),
+        ...(founderRole ? [{ id: founderRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels] }] : []),
+      ],
+    });
+
+    // Store active ticket
+    activeTickets.set(user.id, ticketChannel.id);
+
+    // Send welcome message
+    const welcomeEmbed = new EmbedBuilder()
+      .setColor('#3498DB')
+      .setTitle(`${categoryEmoji[category]} ${categoryName[category]} Ticket`)
+      .setDescription(`
+Hello ${user}! Thanks for creating a ticket.
+
+**Ticket ID:** \`${ticketNumber}\`
+**Category:** ${categoryName[category]}
+
+Please describe your issue and a staff member will assist you soon.
+      `)
+      .setTimestamp()
+      .setFooter({ text: 'Use the button below to close this ticket' });
+
+    const closeButton = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('close_ticket')
+          .setLabel('🔒 Close Ticket')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+    await ticketChannel.send({ content: `${user} | ${modRole ? `<@&${modRole.id}>` : 'Staff'}`, embeds: [welcomeEmbed], components: [closeButton] });
+
+    // Log ticket creation
+    const modLogChannel = await findChannel(guild, CHANNELS.MOD_LOGS);
+    if (modLogChannel) {
+      const logEmbed = new EmbedBuilder()
+        .setColor('#3498DB')
+        .setTitle('🎫 Ticket Created')
+        .addFields(
+          { name: 'User', value: `${user} (${user.id})`, inline: true },
+          { name: 'Category', value: categoryName[category], inline: true },
+          { name: 'Channel', value: `<#${ticketChannel.id}>`, inline: true }
+        )
+        .setTimestamp();
+      await modLogChannel.send({ embeds: [logEmbed] });
+    }
+
+    return { channel: ticketChannel };
+  } catch (error) {
+    console.error('❌ Error creating ticket:', error);
+    return { error: 'Failed to create ticket. Please contact a moderator.' };
+  }
+}
+
+async function closeTicket(channel, closedBy) {
+  const guild = channel.guild;
+  
+  try {
+    // Generate transcript
+    const messages = await channel.messages.fetch({ limit: 100 });
+    const transcript = messages.reverse().map(m => 
+      `[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content}${m.attachments.size > 0 ? ' [Attachments: ' + m.attachments.map(a => a.url).join(', ') + ']' : ''}`
+    ).join('\n');
+
+    // Find who created the ticket
+    const topicMatch = channel.topic?.match(/Ticket by (.+?) \|/);
+    const ticketOwner = topicMatch ? topicMatch[1] : 'Unknown';
+
+    // Remove from active tickets
+    for (const [userId, channelId] of activeTickets.entries()) {
+      if (channelId === channel.id) {
+        activeTickets.delete(userId);
+        break;
+      }
+    }
+
+    // Log closure
+    const modLogChannel = await findChannel(guild, CHANNELS.MOD_LOGS);
+    if (modLogChannel) {
+      const logEmbed = new EmbedBuilder()
+        .setColor('#E74C3C')
+        .setTitle('🎫 Ticket Closed')
+        .addFields(
+          { name: 'Channel', value: channel.name, inline: true },
+          { name: 'Closed By', value: `${closedBy}`, inline: true },
+          { name: 'Original Creator', value: ticketOwner, inline: true }
+        )
+        .setTimestamp();
+
+      // Send transcript as file
+      const transcriptBuffer = Buffer.from(transcript, 'utf-8');
+      await modLogChannel.send({ 
+        embeds: [logEmbed],
+        files: [{ attachment: transcriptBuffer, name: `${channel.name}-transcript.txt` }]
+      });
+    }
+
+    // Delete channel
+    await channel.delete('Ticket closed');
+    console.log(`🎫 Ticket closed: ${channel.name} by ${closedBy.tag}`);
+
+  } catch (error) {
+    console.error('❌ Error closing ticket:', error);
+    throw error;
+  }
 }
 
 // ============================================
@@ -498,7 +703,7 @@ function createWelcomeDM() {
     .setDescription(`
 Hey there! Welcome to the **Lumist.ai** community!
 
-We're so excited to have you here. Before you can access the full server, we need you to complete a quick onboarding process.
+Before you can access the full server, complete a quick onboarding process.
 
 **What you'll need to do:**
 1️⃣ Select your nationality
@@ -554,8 +759,8 @@ function createNationalitySelect() {
 function createScoreSelect() {
   const embed = new EmbedBuilder()
     .setColor('#3498DB')
-    .setTitle('Step 2 of 3: What\'s your current SAT score range?')
-    .setDescription('Select your current or most recent practice test score range.\n\n*Don\'t worry, this is just to connect you with peers at a similar level!*');
+    .setTitle('Step 2 of 3: Current SAT score range?')
+    .setDescription('Select your current or most recent practice test score range.');
 
   const select = new ActionRowBuilder()
     .addComponents(
@@ -602,8 +807,6 @@ function createRulesAcceptance() {
     .setColor('#E74C3C')
     .setTitle('📜 Almost done! Accept the rules')
     .setDescription(`
-Please read and accept our community rules:
-
 **1. Be Respectful** - No harassment or hate speech
 **2. No Spam** - Keep it clean
 **3. Stay On Topic** - Use the right channels
@@ -634,11 +837,9 @@ function createCompletionMessage() {
     .setDescription(`
 Welcome to the **Lumist.ai** community!
 
-You now have access to all community channels. Here's what to do next:
-
 📝 **Introduce yourself** in #introductions
 📚 **Check out** the study channels
-🔗 **Link your Lumist.ai account** in #verify to appear on leaderboards
+🔗 **Link your Lumist.ai account** in #verify
 💬 **Say hi** in #general
 
 See you around! 🚀
@@ -650,20 +851,23 @@ See you around! 🚀
 // ============================================
 // EVENT: BOT READY
 // ============================================
-client.once(Events.ClientReady, () => {
+client.once(Events.ClientReady, async () => {
   console.log('═══════════════════════════════════════════════════════');
-  console.log(`🤖 Lumist Bot is online!`);
+  console.log(`🤖 Lumist Bot v3.0 is online!`);
   console.log(`   Logged in as: ${client.user.tag}`);
   console.log(`   Serving guild: ${GUILD_ID}`);
   console.log(`   Started at: ${new Date().toISOString()}`);
   console.log('═══════════════════════════════════════════════════════');
+  
+  // Register slash commands
+  await registerCommands();
+  
   console.log('');
   console.log('📋 Active features:');
   console.log('   • Onboarding system');
   console.log('   • Auto-moderation');
-  console.log('   • Spam protection');
-  console.log('   • Link filtering');
-  console.log('   • Raid protection');
+  console.log('   • Slash commands');
+  console.log('   • Ticket system');
   console.log('   • Warning system');
   console.log('');
 });
@@ -674,60 +878,42 @@ client.once(Events.ClientReady, () => {
 client.on(Events.GuildMemberAdd, async (member) => {
   console.log(`👋 New member joined: ${member.user.tag}`);
   
-  // Track for raid detection
   joinHistory.push(Date.now());
-  
-  // Clean old entries
   const now = Date.now();
   while (joinHistory.length > 0 && now - joinHistory[0] > AUTOMOD_CONFIG.raid.timeWindow) {
     joinHistory.shift();
   }
   
-  // Check for raid
   if (checkForRaid()) {
     await enableRaidMode(member.guild);
   }
   
-  // If raid mode, kick new joins
   if (isRaidMode) {
     try {
-      await member.send('⚠️ The server is currently in lockdown mode due to a raid. Please try joining again later.');
-      await member.kick('Raid protection - auto kicked during lockdown');
-      console.log(`   🚫 Kicked ${member.user.tag} (raid protection)`);
+      await member.send('⚠️ The server is currently in lockdown mode. Please try joining again later.');
+      await member.kick('Raid protection');
       return;
     } catch (error) {
-      console.error(`   ❌ Error kicking during raid: ${error.message}`);
+      console.error(`❌ Error kicking during raid: ${error.message}`);
     }
   }
   
-  // Normal onboarding
   onboardingState.set(member.user.id, {
-    nationality: null,
-    score: null,
-    grade: null,
-    guildId: member.guild.id,
+    nationality: null, score: null, grade: null, guildId: member.guild.id,
   });
   
   try {
     await member.send(createWelcomeDM());
     console.log(`   ✅ Sent welcome DM to ${member.user.tag}`);
   } catch (error) {
-    console.log(`   ❌ Could not DM ${member.user.tag} (DMs might be disabled)`);
-    
+    console.log(`   ❌ Could not DM ${member.user.tag}`);
     const welcomeChannel = await findChannel(member.guild, CHANNELS.WELCOME);
     if (welcomeChannel) {
       const fallbackEmbed = new EmbedBuilder()
         .setColor('#FFA500')
-        .setDescription(`Hey ${member}! I couldn't send you a DM. Please enable DMs from server members, or click the button below to start onboarding.`);
-      
+        .setDescription(`Hey ${member}! I couldn't send you a DM. Click the button below to start onboarding.`);
       const button = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId('start_onboarding')
-            .setLabel('🚀 Start Onboarding')
-            .setStyle(ButtonStyle.Primary)
-        );
-      
+        .addComponents(new ButtonBuilder().setCustomId('start_onboarding').setLabel('🚀 Start Onboarding').setStyle(ButtonStyle.Primary));
       await welcomeChannel.send({ embeds: [fallbackEmbed], components: [button] });
     }
   }
@@ -737,62 +923,26 @@ client.on(Events.GuildMemberAdd, async (member) => {
 // EVENT: MESSAGE CREATE (Auto-Mod)
 // ============================================
 client.on(Events.MessageCreate, async (message) => {
-  // Ignore bots and DMs
-  if (message.author.bot) return;
-  if (!message.guild) return;
-  
-  // Ignore staff
+  if (message.author.bot || !message.guild) return;
   if (isStaff(message.member)) return;
   
-  // Run auto-mod checks
   let violation = null;
   let reason = null;
   
-  // Check banned words (highest priority)
-  if (checkBannedWords(message)) {
-    violation = 'banned_words';
-    reason = 'Using prohibited language';
-  }
-  // Check unapproved links
-  else if (checkLinks(message)) {
-    violation = 'unapproved_link';
-    reason = 'Posting unapproved links';
-  }
-  // Check mention spam
-  else if (checkMentionSpam(message)) {
-    violation = 'mention_spam';
-    reason = 'Mention spam';
-  }
-  // Check spam
-  else if (checkSpam(message)) {
-    violation = 'spam';
-    reason = 'Message spam';
-  }
-  // Check duplicates
-  else if (checkDuplicates(message)) {
-    violation = 'duplicate';
-    reason = 'Duplicate messages';
-  }
+  if (checkBannedWords(message)) { violation = 'banned_words'; reason = 'Using prohibited language'; }
+  else if (checkLinks(message)) { violation = 'unapproved_link'; reason = 'Posting unapproved links'; }
+  else if (checkMentionSpam(message)) { violation = 'mention_spam'; reason = 'Mention spam'; }
+  else if (checkSpam(message)) { violation = 'spam'; reason = 'Message spam'; }
+  else if (checkDuplicates(message)) { violation = 'duplicate'; reason = 'Duplicate messages'; }
   
-  // Handle violation
   if (violation) {
     try {
-      // Delete the message
       await message.delete();
       console.log(`🗑️ Deleted message from ${message.author.tag}: ${violation}`);
-      
-      // Add warning and execute action
       const warningCount = addWarning(message.author.id, reason);
       await executeWarningAction(message.member, warningCount, reason, message.guild);
-      
-      // Send feedback to user
-      const feedback = await message.channel.send({
-        content: `⚠️ ${message.author}, your message was removed: **${reason}**`,
-      });
-      
-      // Auto-delete feedback after 5 seconds
+      const feedback = await message.channel.send({ content: `⚠️ ${message.author}, your message was removed: **${reason}**` });
       setTimeout(() => feedback.delete().catch(() => {}), 5000);
-      
     } catch (error) {
       console.error(`❌ Auto-mod error: ${error.message}`);
     }
@@ -800,56 +950,203 @@ client.on(Events.MessageCreate, async (message) => {
 });
 
 // ============================================
-// EVENT: INTERACTIONS (Onboarding)
+// EVENT: INTERACTIONS
 // ============================================
 client.on(Events.InteractionCreate, async (interaction) => {
-  // Handle buttons
-  if (interaction.isButton()) {
-    if (interaction.customId === 'start_onboarding') {
-      console.log(`🚀 ${interaction.user.tag} started onboarding`);
+  // ---- SLASH COMMANDS ----
+  if (interaction.isChatInputCommand()) {
+    const { commandName, options } = interaction;
+    
+    // /warn
+    if (commandName === 'warn') {
+      const user = options.getUser('user');
+      const reason = options.getString('reason');
+      const member = await interaction.guild.members.fetch(user.id).catch(() => null);
       
-      if (!onboardingState.has(interaction.user.id)) {
-        onboardingState.set(interaction.user.id, {
-          nationality: null,
-          score: null,
-          grade: null,
-          guildId: GUILD_ID,
-        });
+      if (!member) {
+        return interaction.reply({ content: '❌ User not found in this server.', ephemeral: true });
       }
       
+      const warningCount = addWarning(user.id, reason, interaction.user.tag);
+      await logModAction(interaction.guild, 'Warning Issued', user, interaction.user, `${reason} (Warning #${warningCount})`, '#FFA500');
+      
+      await member.send(`⚠️ **Warning from Lumist.ai Server**\nReason: ${reason}\nModerator: ${interaction.user.tag}\n\nThis is warning #${warningCount}.`).catch(() => {});
+      
+      await interaction.reply({ content: `✅ Warned **${user.tag}** (Warning #${warningCount})\nReason: ${reason}`, ephemeral: true });
+    }
+    
+    // /mute
+    if (commandName === 'mute') {
+      const user = options.getUser('user');
+      const duration = options.getInteger('duration');
+      const reason = options.getString('reason') || 'No reason provided';
+      const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+      
+      if (!member) {
+        return interaction.reply({ content: '❌ User not found.', ephemeral: true });
+      }
+      
+      try {
+        await member.timeout(duration * 60 * 1000, reason);
+        await logModAction(interaction.guild, `Muted (${duration} min)`, user, interaction.user, reason, '#E67E22');
+        await interaction.reply({ content: `✅ Muted **${user.tag}** for ${duration} minutes.\nReason: ${reason}`, ephemeral: true });
+      } catch (error) {
+        await interaction.reply({ content: `❌ Failed to mute: ${error.message}`, ephemeral: true });
+      }
+    }
+    
+    // /unmute
+    if (commandName === 'unmute') {
+      const user = options.getUser('user');
+      const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+      
+      if (!member) {
+        return interaction.reply({ content: '❌ User not found.', ephemeral: true });
+      }
+      
+      try {
+        await member.timeout(null);
+        await logModAction(interaction.guild, 'Unmuted', user, interaction.user, 'Manual unmute', '#2ECC71');
+        await interaction.reply({ content: `✅ Unmuted **${user.tag}**.`, ephemeral: true });
+      } catch (error) {
+        await interaction.reply({ content: `❌ Failed to unmute: ${error.message}`, ephemeral: true });
+      }
+    }
+    
+    // /kick
+    if (commandName === 'kick') {
+      const user = options.getUser('user');
+      const reason = options.getString('reason') || 'No reason provided';
+      const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+      
+      if (!member) {
+        return interaction.reply({ content: '❌ User not found.', ephemeral: true });
+      }
+      
+      try {
+        await member.send(`👢 **You have been kicked from Lumist.ai**\nReason: ${reason}`).catch(() => {});
+        await member.kick(reason);
+        await logModAction(interaction.guild, 'Kicked', user, interaction.user, reason, '#E74C3C');
+        await interaction.reply({ content: `✅ Kicked **${user.tag}**.\nReason: ${reason}`, ephemeral: true });
+      } catch (error) {
+        await interaction.reply({ content: `❌ Failed to kick: ${error.message}`, ephemeral: true });
+      }
+    }
+    
+    // /ban
+    if (commandName === 'ban') {
+      const user = options.getUser('user');
+      const reason = options.getString('reason') || 'No reason provided';
+      const days = options.getInteger('days') || 0;
+      
+      try {
+        await user.send(`🚫 **You have been banned from Lumist.ai**\nReason: ${reason}`).catch(() => {});
+        await interaction.guild.members.ban(user.id, { deleteMessageSeconds: days * 86400, reason });
+        await logModAction(interaction.guild, 'Banned', user, interaction.user, reason, '#992D22');
+        await interaction.reply({ content: `✅ Banned **${user.tag}**.\nReason: ${reason}`, ephemeral: true });
+      } catch (error) {
+        await interaction.reply({ content: `❌ Failed to ban: ${error.message}`, ephemeral: true });
+      }
+    }
+    
+    // /warnings
+    if (commandName === 'warnings') {
+      const user = options.getUser('user');
+      const warnings = getWarnings(user.id);
+      
+      if (warnings.length === 0) {
+        return interaction.reply({ content: `✅ **${user.tag}** has no active warnings.`, ephemeral: true });
+      }
+      
+      const warningList = warnings.map((w, i) => 
+        `**#${i + 1}** - ${new Date(w.timestamp).toLocaleDateString()}\nReason: ${w.reason}\nBy: ${w.moderator}`
+      ).join('\n\n');
+      
+      const embed = new EmbedBuilder()
+        .setColor('#FFA500')
+        .setTitle(`⚠️ Warnings for ${user.tag}`)
+        .setDescription(warningList)
+        .setFooter({ text: `Total: ${warnings.length} warning(s) | Warnings expire after ${AUTOMOD_CONFIG.warnings.expireDays} days` });
+      
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+    
+    // /clearwarnings
+    if (commandName === 'clearwarnings') {
+      const user = options.getUser('user');
+      clearWarnings(user.id);
+      await logModAction(interaction.guild, 'Warnings Cleared', user, interaction.user, 'All warnings cleared', '#2ECC71');
+      await interaction.reply({ content: `✅ Cleared all warnings for **${user.tag}**.`, ephemeral: true });
+    }
+    
+    // /purge
+    if (commandName === 'purge') {
+      const amount = options.getInteger('amount');
+      const targetUser = options.getUser('user');
+      
+      try {
+        let messages = await interaction.channel.messages.fetch({ limit: amount + 1 });
+        
+        if (targetUser) {
+          messages = messages.filter(m => m.author.id === targetUser.id);
+        }
+        
+        const deleted = await interaction.channel.bulkDelete(messages.first(amount), true);
+        await interaction.reply({ content: `✅ Deleted ${deleted.size} messages.`, ephemeral: true });
+      } catch (error) {
+        await interaction.reply({ content: `❌ Failed to purge: ${error.message}`, ephemeral: true });
+      }
+    }
+    
+    // /ticket
+    if (commandName === 'ticket') {
+      await interaction.reply(createTicketCategorySelect());
+    }
+    
+    // /close
+    if (commandName === 'close') {
+      if (!interaction.channel.name.startsWith('ticket-')) {
+        return interaction.reply({ content: '❌ This command can only be used in ticket channels.', ephemeral: true });
+      }
+      
+      await interaction.reply({ content: '🔒 Closing ticket...', ephemeral: true });
+      await closeTicket(interaction.channel, interaction.user);
+    }
+    
+    // /setuptickets
+    if (commandName === 'setuptickets') {
+      await interaction.channel.send(createTicketEmbed());
+      await interaction.reply({ content: '✅ Ticket system set up in this channel!', ephemeral: true });
+    }
+  }
+  
+  // ---- BUTTONS ----
+  if (interaction.isButton()) {
+    // Onboarding start
+    if (interaction.customId === 'start_onboarding') {
+      if (!onboardingState.has(interaction.user.id)) {
+        onboardingState.set(interaction.user.id, { nationality: null, score: null, grade: null, guildId: GUILD_ID });
+      }
       await interaction.update(createNationalitySelect());
     }
     
+    // Accept rules
     if (interaction.customId === 'accept_rules') {
       const state = onboardingState.get(interaction.user.id);
-      
       if (!state) {
-        await interaction.reply({ content: '❌ Something went wrong. Please try again from the beginning.', ephemeral: true });
-        return;
+        return interaction.reply({ content: '❌ Something went wrong. Please try again.', ephemeral: true });
       }
-      
-      console.log(`✅ ${interaction.user.tag} accepted rules, assigning roles...`);
       
       try {
         const guild = await client.guilds.fetch(state.guildId || GUILD_ID);
         const member = await guild.members.fetch(interaction.user.id);
         
-        const rolesToAssign = [
-          ROLES.MEMBER,
-          getNationalityRole(state.nationality),
-          getScoreRole(state.score),
-          getGradeRole(state.grade),
-        ];
+        const rolesToAssign = [ROLES.MEMBER, getNationalityRole(state.nationality), getScoreRole(state.score), getGradeRole(state.grade)];
         
         for (const roleName of rolesToAssign) {
           if (roleName) {
             const role = await findRole(guild, roleName);
-            if (role) {
-              await member.roles.add(role);
-              console.log(`   ✅ Assigned role: ${roleName}`);
-            } else {
-              console.log(`   ⚠️ Role not found: ${roleName}`);
-            }
+            if (role) await member.roles.add(role);
           }
         }
         
@@ -861,48 +1158,62 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .setColor('#2ECC71')
             .setDescription(`🎉 Welcome ${member} to **Lumist.ai**! Say hi and tell us about yourself!`)
             .setTimestamp();
-          
           await introChannel.send({ embeds: [welcomeEmbed] });
         }
         
-        console.log(`🎉 ${interaction.user.tag} completed onboarding!`);
         onboardingState.delete(interaction.user.id);
-        
+        console.log(`🎉 ${interaction.user.tag} completed onboarding!`);
       } catch (error) {
-        console.error('❌ Error assigning roles:', error);
-        await interaction.reply({ content: '❌ There was an error completing your onboarding. Please contact a moderator.', ephemeral: true });
+        console.error('❌ Error:', error);
+        await interaction.reply({ content: '❌ Error completing onboarding. Please contact a moderator.', ephemeral: true });
       }
+    }
+    
+    // Create ticket button
+    if (interaction.customId === 'create_ticket') {
+      await interaction.reply(createTicketCategorySelect());
+    }
+    
+    // Close ticket button
+    if (interaction.customId === 'close_ticket') {
+      await interaction.reply({ content: '🔒 Closing ticket...', ephemeral: true });
+      await closeTicket(interaction.channel, interaction.user);
     }
   }
   
-  // Handle select menus
+  // ---- SELECT MENUS ----
   if (interaction.isStringSelectMenu()) {
-    const state = onboardingState.get(interaction.user.id) || {
-      nationality: null,
-      score: null,
-      grade: null,
-      guildId: GUILD_ID,
-    };
+    // Onboarding selects
+    const state = onboardingState.get(interaction.user.id) || { nationality: null, score: null, grade: null, guildId: GUILD_ID };
     
     if (interaction.customId === 'select_nationality') {
       state.nationality = interaction.values[0];
       onboardingState.set(interaction.user.id, state);
-      console.log(`   📍 ${interaction.user.tag} selected nationality: ${state.nationality}`);
       await interaction.update(createScoreSelect());
     }
     
     if (interaction.customId === 'select_score') {
       state.score = interaction.values[0];
       onboardingState.set(interaction.user.id, state);
-      console.log(`   📊 ${interaction.user.tag} selected score: ${state.score}`);
       await interaction.update(createGradeSelect());
     }
     
     if (interaction.customId === 'select_grade') {
       state.grade = interaction.values[0];
       onboardingState.set(interaction.user.id, state);
-      console.log(`   🎒 ${interaction.user.tag} selected grade: ${state.grade}`);
       await interaction.update(createRulesAcceptance());
+    }
+    
+    // Ticket category select
+    if (interaction.customId === 'ticket_category') {
+      const category = interaction.values[0];
+      const result = await createTicketChannel(interaction.guild, interaction.user, category);
+      
+      if (result.error) {
+        await interaction.update({ content: `❌ ${result.error}`, embeds: [], components: [], ephemeral: true });
+      } else {
+        await interaction.update({ content: `✅ Ticket created! <#${result.channel.id}>`, embeds: [], components: [], ephemeral: true });
+      }
     }
   }
 });
@@ -910,20 +1221,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // ============================================
 // ERROR HANDLING
 // ============================================
-client.on('error', (error) => {
-  console.error('❌ Discord client error:', error);
-});
-
-process.on('unhandledRejection', (error) => {
-  console.error('❌ Unhandled promise rejection:', error);
-});
-
-process.on('SIGTERM', () => {
-  console.log('🛑 Shutting down gracefully...');
-  client.destroy();
-  server.close();
-  process.exit(0);
-});
+client.on('error', (error) => console.error('❌ Client error:', error));
+process.on('unhandledRejection', (error) => console.error('❌ Unhandled rejection:', error));
+process.on('SIGTERM', () => { client.destroy(); server.close(); process.exit(0); });
 
 // ============================================
 // LOGIN
