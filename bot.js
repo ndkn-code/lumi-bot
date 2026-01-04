@@ -1,5 +1,5 @@
 /**
- * Lumist.ai Discord Bot v4.0
+ * Lumist.ai Discord Bot v4.1
  * 
  * Features:
  * - Onboarding system
@@ -7,6 +7,7 @@
  * - Slash commands
  * - Ticket system
  * - Analytics pipeline (Supabase integration)
+ * - AI Customer Support Chatbot (NEW)
  */
 
 const {
@@ -23,6 +24,7 @@ const {
   REST,
   Routes,
   ChannelType,
+  Partials,
 } = require('discord.js');
 
 const http = require('http');
@@ -39,6 +41,12 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://jkcdwriffpfoyrtqqtzt.s
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const ANALYTICS_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
+// AI Chatbot Configuration (NEW)
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL; // e.g., https://your-n8n.onrender.com/webhook/lumist-chat
+const AI_ENABLED = !!N8N_WEBHOOK_URL;
+const AI_RESPONSE_TIMEOUT = 30000; // 30 seconds
+const INTERNAL_CHAT_CHANNEL_ID = process.env.INTERNAL_CHAT_CHANNEL_ID; // For escalation notifications
+
 if (!BOT_TOKEN) {
   console.error('❌ Error: BOT_TOKEN environment variable is not set');
   process.exit(1);
@@ -46,6 +54,10 @@ if (!BOT_TOKEN) {
 
 if (!SUPABASE_SERVICE_KEY) {
   console.warn('⚠️ Warning: SUPABASE_SERVICE_KEY not set - analytics disabled');
+}
+
+if (!N8N_WEBHOOK_URL) {
+  console.warn('⚠️ Warning: N8N_WEBHOOK_URL not set - AI chatbot disabled');
 }
 
 // ============================================
@@ -144,6 +156,7 @@ const server = http.createServer((req, res) => {
       bot: client.user ? client.user.tag : 'connecting...',
       uptime: process.uptime(),
       analyticsEnabled: !!SUPABASE_SERVICE_KEY,
+      aiEnabled: AI_ENABLED,
       timestamp: new Date().toISOString()
     }));
   } else {
@@ -167,8 +180,9 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildModeration,
-    GatewayIntentBits.GuildPresences, // For online count
+    GatewayIntentBits.GuildPresences,
   ],
+  partials: [Partials.Channel, Partials.Message], // Required for DMs
 });
 
 // ============================================
@@ -183,8 +197,255 @@ const activeTickets = new Map();
 let isRaidMode = false;
 
 // Analytics tracking
-const channelMessageCounts = new Map(); // channel_id -> { count, users: Set }
-const totalJoinedCount = 0; // Cumulative joins (persisted in Supabase)
+const channelMessageCounts = new Map();
+const totalJoinedCount = 0;
+
+// AI Chat tracking (to prevent spam)
+const aiCooldowns = new Map(); // userId -> lastRequestTime
+const AI_COOLDOWN_MS = 3000; // 3 seconds between requests per user
+
+// ============================================
+// AI CHATBOT FUNCTIONS (NEW)
+// ============================================
+
+/**
+ * Check if a message should trigger AI response
+ */
+function shouldTriggerAI(message) {
+  // Ignore bots
+  if (message.author.bot) return false;
+  
+  // DM to bot
+  if (!message.guild) return true;
+  
+  // Bot was mentioned
+  if (message.mentions.has(client.user)) return true;
+  
+  return false;
+}
+
+/**
+ * Check if user is on cooldown
+ */
+function isOnCooldown(userId) {
+  const lastRequest = aiCooldowns.get(userId);
+  if (!lastRequest) return false;
+  return Date.now() - lastRequest < AI_COOLDOWN_MS;
+}
+
+/**
+ * Extract clean message content (remove bot mention)
+ */
+function extractMessageContent(message) {
+  let content = message.content;
+  
+  // Remove bot mention
+  if (message.guild) {
+    content = content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
+  }
+  
+  return content;
+}
+
+/**
+ * Determine user locale based on nationality role
+ */
+function getUserLocale(member) {
+  if (!member) return 'vi'; // Default to Vietnamese
+  
+  const roles = member.roles.cache;
+  if (roles.some(r => r.name === ROLES.VIETNAM)) return 'vi';
+  if (roles.some(r => [ROLES.USA, ROLES.UK, ROLES.SINGAPORE].includes(r.name))) return 'en';
+  
+  return 'vi'; // Default
+}
+
+/**
+ * Call n8n webhook for AI response
+ */
+async function getAIResponse(message, content) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), AI_RESPONSE_TIMEOUT);
+  
+  try {
+    const member = message.guild ? await message.guild.members.fetch(message.author.id).catch(() => null) : null;
+    const locale = getUserLocale(member);
+    
+    const payload = {
+      platform: 'discord',
+      platform_user_id: message.author.id,
+      platform_channel_id: message.channel.id,
+      platform_username: message.author.tag,
+      message: content,
+      locale: locale,
+      is_dm: !message.guild,
+      metadata: {
+        guild_id: message.guild?.id || null,
+        guild_name: message.guild?.name || null,
+        channel_name: message.channel.name || 'DM',
+        user_roles: member?.roles.cache.map(r => r.name) || [],
+      }
+    };
+    
+    console.log(`🤖 AI Request from ${message.author.tag}: "${content.substring(0, 50)}..."`);
+    
+    const response = await fetch(N8N_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      throw new Error(`n8n returned status ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data;
+    
+  } catch (error) {
+    clearTimeout(timeoutId);
+    
+    if (error.name === 'AbortError') {
+      console.error('❌ AI request timed out');
+      return { error: 'timeout', response: null };
+    }
+    
+    console.error('❌ AI request failed:', error.message);
+    return { error: error.message, response: null };
+  }
+}
+
+/**
+ * Handle AI response and send to Discord
+ */
+async function handleAIResponse(message, aiResult) {
+  try {
+    // Error handling
+    if (aiResult.error) {
+      const errorEmbed = new EmbedBuilder()
+        .setColor('#E74C3C')
+        .setDescription('⚠️ Sorry, I\'m having trouble processing your request right now. Please try again or create a support ticket with `/ticket`.');
+      
+      await message.reply({ embeds: [errorEmbed] });
+      return;
+    }
+    
+    // Check if escalation is needed
+    if (aiResult.escalate) {
+      await handleEscalation(message, aiResult);
+      return;
+    }
+    
+    // Normal response
+    const response = aiResult.response || 'I apologize, but I couldn\'t generate a response. Please try again.';
+    
+    // Split long responses (Discord has 2000 char limit)
+    if (response.length <= 2000) {
+      await message.reply(response);
+    } else {
+      // Split into chunks
+      const chunks = splitMessage(response, 1900);
+      for (let i = 0; i < chunks.length; i++) {
+        if (i === 0) {
+          await message.reply(chunks[i]);
+        } else {
+          await message.channel.send(chunks[i]);
+        }
+      }
+    }
+    
+    console.log(`✅ AI Response sent to ${message.author.tag}`);
+    
+  } catch (error) {
+    console.error('❌ Error sending AI response:', error);
+  }
+}
+
+/**
+ * Handle escalation to human support
+ */
+async function handleEscalation(message, aiResult) {
+  try {
+    // Reply to user
+    const userEmbed = new EmbedBuilder()
+      .setColor('#FFA500')
+      .setTitle('🙋 Connecting you to human support')
+      .setDescription(aiResult.response || 'I\'m connecting you with our support team. Someone will be with you shortly!')
+      .addFields(
+        { name: 'What to do next', value: 'You can also create a support ticket with `/ticket` for faster response.' }
+      );
+    
+    await message.reply({ embeds: [userEmbed] });
+    
+    // Notify team in internal channel
+    if (INTERNAL_CHAT_CHANNEL_ID) {
+      const internalChannel = await client.channels.fetch(INTERNAL_CHAT_CHANNEL_ID).catch(() => null);
+      
+      if (internalChannel) {
+        const escalationEmbed = new EmbedBuilder()
+          .setColor('#E74C3C')
+          .setTitle('🚨 Support Escalation')
+          .setDescription(`User needs human assistance`)
+          .addFields(
+            { name: 'User', value: `${message.author.tag} (${message.author.id})`, inline: true },
+            { name: 'Channel', value: message.guild ? `<#${message.channel.id}>` : 'DM', inline: true },
+            { name: 'Original Message', value: message.content.substring(0, 1000) },
+            { name: 'Reason', value: aiResult.escalation_reason || 'User requested human support' }
+          )
+          .setTimestamp();
+        
+        await internalChannel.send({
+          content: '@here Human support needed!',
+          embeds: [escalationEmbed],
+          components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setLabel('View Conversation')
+              .setStyle(ButtonStyle.Link)
+              .setURL(message.url)
+          )]
+        });
+      }
+    }
+    
+    console.log(`🚨 Escalation triggered for ${message.author.tag}`);
+    
+  } catch (error) {
+    console.error('❌ Error handling escalation:', error);
+  }
+}
+
+/**
+ * Split long messages into chunks
+ */
+function splitMessage(text, maxLength) {
+  const chunks = [];
+  let remaining = text;
+  
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLength) {
+      chunks.push(remaining);
+      break;
+    }
+    
+    // Try to split at newline
+    let splitIndex = remaining.lastIndexOf('\n', maxLength);
+    if (splitIndex === -1 || splitIndex < maxLength / 2) {
+      // Try to split at space
+      splitIndex = remaining.lastIndexOf(' ', maxLength);
+    }
+    if (splitIndex === -1 || splitIndex < maxLength / 2) {
+      splitIndex = maxLength;
+    }
+    
+    chunks.push(remaining.substring(0, splitIndex));
+    remaining = remaining.substring(splitIndex).trim();
+  }
+  
+  return chunks;
+}
 
 // ============================================
 // SUPABASE ANALYTICS FUNCTIONS
@@ -306,7 +567,7 @@ async function collectServerStats() {
     // Collect funnel stats
     await supabaseInsert('discord_funnel_stats', {
       recorded_at: timestamp,
-      total_joined: totalMembers + (await getLeaveCount()), // Approximate
+      total_joined: totalMembers + (await getLeaveCount()),
       completed_onboarding: memberRoleCount,
       verified: verifiedCount,
       premium: premiumCount,
@@ -339,8 +600,6 @@ async function collectServerStats() {
 
 // Helper to get approximate leave count from events
 async function getLeaveCount() {
-  // This would query Supabase, but for simplicity we'll return 0
-  // The actual count comes from the events table
   return 0;
 }
 
@@ -435,6 +694,12 @@ const commands = [
     .setName('stats')
     .setDescription('Show server statistics')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  
+  // NEW: Ask Lumi command
+  new SlashCommandBuilder()
+    .setName('ask')
+    .setDescription('Ask Lumi a question about Lumist.ai or the SAT')
+    .addStringOption(option => option.setName('question').setDescription('Your question').setRequired(true)),
 ].map(command => command.toJSON());
 
 // ============================================
@@ -487,6 +752,154 @@ function getGradeRole(value) {
 }
 
 // ============================================
+// AUTO-MOD FUNCTIONS
+// ============================================
+function checkSpam(message) {
+  if (!AUTOMOD_CONFIG.spam.enabled) return false;
+  const userId = message.author.id;
+  const now = Date.now();
+  
+  if (!messageHistory.has(userId)) {
+    messageHistory.set(userId, []);
+  }
+  
+  const history = messageHistory.get(userId);
+  history.push(now);
+  
+  while (history.length > 0 && now - history[0] > AUTOMOD_CONFIG.spam.timeWindow) {
+    history.shift();
+  }
+  
+  return history.length > AUTOMOD_CONFIG.spam.maxMessages;
+}
+
+function checkBannedWords(message) {
+  if (!AUTOMOD_CONFIG.bannedWords.enabled) return false;
+  const content = message.content.toLowerCase();
+  
+  for (const word of AUTOMOD_CONFIG.bannedWords.words) {
+    if (content.includes(word.toLowerCase())) return true;
+  }
+  
+  for (const pattern of AUTOMOD_CONFIG.bannedWords.patterns) {
+    if (new RegExp(pattern, 'i').test(content)) return true;
+  }
+  
+  return false;
+}
+
+function checkLinks(message) {
+  if (!AUTOMOD_CONFIG.links.enabled) return false;
+  const urlRegex = /https?:\/\/([^\s/]+)/gi;
+  const matches = message.content.matchAll(urlRegex);
+  
+  for (const match of matches) {
+    const domain = match[1].toLowerCase();
+    if (!AUTOMOD_CONFIG.links.allowedDomains.some(d => domain === d || domain.endsWith('.' + d))) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+function checkMentionSpam(message) {
+  if (!AUTOMOD_CONFIG.mentions.enabled) return false;
+  const mentionCount = message.mentions.users.size + message.mentions.roles.size;
+  return mentionCount > AUTOMOD_CONFIG.mentions.maxMentions;
+}
+
+function checkDuplicates(message) {
+  if (!AUTOMOD_CONFIG.duplicates.enabled) return false;
+  const userId = message.author.id;
+  const content = message.content.toLowerCase();
+  const now = Date.now();
+  
+  if (!duplicateHistory.has(userId)) {
+    duplicateHistory.set(userId, []);
+  }
+  
+  const history = duplicateHistory.get(userId);
+  
+  while (history.length > 0 && now - history[0].time > AUTOMOD_CONFIG.duplicates.timeWindow) {
+    history.shift();
+  }
+  
+  const duplicateCount = history.filter(h => h.content === content).length;
+  history.push({ content, time: now });
+  
+  return duplicateCount >= AUTOMOD_CONFIG.duplicates.maxDuplicates;
+}
+
+function checkForRaid() {
+  return joinHistory.length >= AUTOMOD_CONFIG.raid.joinThreshold;
+}
+
+async function enableRaidMode(guild) {
+  if (isRaidMode) return;
+  isRaidMode = true;
+  console.log('🚨 RAID MODE ENABLED');
+  
+  const modChannel = await findChannel(guild, CHANNELS.MOD_LOGS);
+  if (modChannel) {
+    await modChannel.send({
+      embeds: [new EmbedBuilder().setColor('#E74C3C').setTitle('🚨 RAID DETECTED').setDescription(`Raid mode enabled for ${AUTOMOD_CONFIG.raid.lockdownMinutes} minutes.`)]
+    });
+  }
+  
+  setTimeout(() => {
+    isRaidMode = false;
+    console.log('✅ Raid mode disabled');
+  }, AUTOMOD_CONFIG.raid.lockdownMinutes * 60 * 1000);
+}
+
+function addWarning(userId, reason, moderator = 'AutoMod') {
+  if (!userWarnings.has(userId)) {
+    userWarnings.set(userId, []);
+  }
+  const warnings = userWarnings.get(userId);
+  warnings.push({ reason, moderator, timestamp: Date.now() });
+  
+  const cutoff = Date.now() - (AUTOMOD_CONFIG.warnings.expireDays * 24 * 60 * 60 * 1000);
+  const active = warnings.filter(w => w.timestamp > cutoff);
+  userWarnings.set(userId, active);
+  
+  return active.length;
+}
+
+function getWarnings(userId) {
+  const warnings = userWarnings.get(userId) || [];
+  const cutoff = Date.now() - (AUTOMOD_CONFIG.warnings.expireDays * 24 * 60 * 60 * 1000);
+  return warnings.filter(w => w.timestamp > cutoff);
+}
+
+function clearWarnings(userId) {
+  userWarnings.delete(userId);
+}
+
+async function executeWarningAction(member, count, reason, guild) {
+  const action = AUTOMOD_CONFIG.warnings.escalation[count];
+  if (!action) return;
+  
+  try {
+    if (action === 'warn') {
+      await member.send(`⚠️ Warning: ${reason}`).catch(() => {});
+    } else if (action.startsWith('mute_')) {
+      const duration = action === 'mute_1h' ? 60 : 1440;
+      await member.timeout(duration * 60 * 1000, reason);
+    } else if (action === 'ban_7d') {
+      await member.ban({ deleteMessageSeconds: 7 * 86400, reason });
+    } else if (action === 'ban_permanent') {
+      await member.ban({ reason });
+    }
+    
+    await logModAction(guild, action.toUpperCase(), member.user, { tag: 'AutoMod' }, reason, '#E74C3C');
+  } catch (error) {
+    console.error(`❌ Failed to execute ${action}:`, error.message);
+  }
+}
+
+// ============================================
 // MOD LOGGING
 // ============================================
 async function logModAction(guild, action, target, moderator, reason, color = '#E74C3C') {
@@ -498,205 +911,39 @@ async function logModAction(guild, action, target, moderator, reason, color = '#
     .setTitle(`🛡️ ${action}`)
     .addFields(
       { name: 'User', value: `${target} (${target.id})`, inline: true },
-      { name: 'Moderator', value: `${moderator}`, inline: true },
-      { name: 'Reason', value: reason || 'No reason provided' }
+      { name: 'Moderator', value: moderator.tag || moderator, inline: true },
+      { name: 'Reason', value: reason }
     )
-    .setTimestamp()
-    .setFooter({ text: `User ID: ${target.id}` });
+    .setTimestamp();
 
   await modLogChannel.send({ embeds: [embed] });
-}
-
-// ============================================
-// WARNING SYSTEM
-// ============================================
-function getWarnings(userId) {
-  const warnings = userWarnings.get(userId) || [];
-  const now = Date.now();
-  const validWarnings = warnings.filter(w => 
-    now - w.timestamp < AUTOMOD_CONFIG.warnings.expireDays * 24 * 60 * 60 * 1000
-  );
-  userWarnings.set(userId, validWarnings);
-  return validWarnings;
-}
-
-function getWarningCount(userId) {
-  return getWarnings(userId).length;
-}
-
-function addWarning(userId, reason, moderator = 'Auto-Mod') {
-  const warnings = userWarnings.get(userId) || [];
-  warnings.push({ timestamp: Date.now(), reason, moderator });
-  userWarnings.set(userId, warnings);
-  return warnings.length;
-}
-
-function clearWarnings(userId) {
-  userWarnings.delete(userId);
-}
-
-async function executeWarningAction(member, warningCount, reason, guild) {
-  const action = AUTOMOD_CONFIG.warnings.escalation[warningCount] || 'warn';
-  
-  try {
-    switch (action) {
-      case 'warn':
-        await member.send(`⚠️ **Warning from Lumist.ai Server**\nReason: ${reason}\n\nThis is warning #${warningCount}.`).catch(() => {});
-        await logModAction(guild, 'Warning Issued', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#FFA500');
-        break;
-      case 'mute_1h':
-        await member.timeout(60 * 60 * 1000, reason);
-        await member.send(`🔇 **You have been muted for 1 hour**\nReason: ${reason}`).catch(() => {});
-        await logModAction(guild, 'Muted (1 hour)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#E67E22');
-        break;
-      case 'mute_24h':
-        await member.timeout(24 * 60 * 60 * 1000, reason);
-        await member.send(`🔇 **You have been muted for 24 hours**\nReason: ${reason}`).catch(() => {});
-        await logModAction(guild, 'Muted (24 hours)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#E74C3C');
-        break;
-      case 'ban_7d':
-        await member.send(`🚫 **You have been banned**\nReason: ${reason}`).catch(() => {});
-        await member.ban({ deleteMessageSeconds: 86400, reason });
-        await logModAction(guild, 'Banned (7 days)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#992D22');
-        break;
-      case 'ban_permanent':
-        await member.send(`🚫 **You have been permanently banned**\nReason: ${reason}`).catch(() => {});
-        await member.ban({ deleteMessageSeconds: 86400, reason });
-        await logModAction(guild, 'Banned (Permanent)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#1a1a1a');
-        break;
-    }
-  } catch (error) {
-    console.error(`❌ Error executing warning action: ${error.message}`);
-  }
-}
-
-// ============================================
-// AUTO-MOD CHECKS
-// ============================================
-function checkSpam(message) {
-  if (!AUTOMOD_CONFIG.spam.enabled) return false;
-  const userId = message.author.id;
-  const now = Date.now();
-  const history = messageHistory.get(userId) || [];
-  history.push(now);
-  const recentMessages = history.filter(t => now - t < AUTOMOD_CONFIG.spam.timeWindow);
-  messageHistory.set(userId, recentMessages);
-  return recentMessages.length > AUTOMOD_CONFIG.spam.maxMessages;
-}
-
-function checkDuplicates(message) {
-  if (!AUTOMOD_CONFIG.duplicates.enabled) return false;
-  const userId = message.author.id;
-  const content = message.content.toLowerCase().trim();
-  const now = Date.now();
-  if (content.length < 5) return false;
-  const history = duplicateHistory.get(userId) || [];
-  history.push({ content, timestamp: now });
-  const recentMessages = history.filter(m => now - m.timestamp < AUTOMOD_CONFIG.duplicates.timeWindow);
-  duplicateHistory.set(userId, recentMessages);
-  return recentMessages.filter(m => m.content === content).length >= AUTOMOD_CONFIG.duplicates.maxDuplicates;
-}
-
-function checkMentionSpam(message) {
-  if (!AUTOMOD_CONFIG.mentions.enabled) return false;
-  return (message.mentions.users.size + message.mentions.roles.size) > AUTOMOD_CONFIG.mentions.maxMentions;
-}
-
-function checkBannedWords(message) {
-  if (!AUTOMOD_CONFIG.bannedWords.enabled) return false;
-  const content = message.content.toLowerCase();
-  for (const word of AUTOMOD_CONFIG.bannedWords.words) {
-    if (content.includes(word.toLowerCase())) return true;
-  }
-  for (const pattern of AUTOMOD_CONFIG.bannedWords.patterns) {
-    if (pattern.test(content)) return true;
-  }
-  return false;
-}
-
-function checkLinks(message) {
-  if (!AUTOMOD_CONFIG.links.enabled) return false;
-  const urlRegex = /https?:\/\/([^\s<]+)/gi;
-  const matches = message.content.match(urlRegex);
-  if (!matches) return false;
-  for (const url of matches) {
-    try {
-      const hostname = new URL(url).hostname.toLowerCase();
-      const isAllowed = AUTOMOD_CONFIG.links.allowedDomains.some(domain => 
-        hostname === domain || hostname.endsWith('.' + domain)
-      );
-      if (!isAllowed) return true;
-    } catch {
-      return true;
-    }
-  }
-  return false;
-}
-
-// ============================================
-// RAID PROTECTION
-// ============================================
-function checkForRaid() {
-  if (!AUTOMOD_CONFIG.raid.enabled) return false;
-  const now = Date.now();
-  const recentJoins = joinHistory.filter(t => now - t < AUTOMOD_CONFIG.raid.timeWindow);
-  return recentJoins.length >= AUTOMOD_CONFIG.raid.joinThreshold;
-}
-
-async function enableRaidMode(guild) {
-  if (isRaidMode) return;
-  isRaidMode = true;
-  console.log('🚨 RAID MODE ENABLED');
-  
-  const modLogChannel = await findChannel(guild, CHANNELS.MOD_LOGS);
-  if (modLogChannel) {
-    await modLogChannel.send({
-      embeds: [new EmbedBuilder()
-        .setColor('#FF0000')
-        .setTitle('🚨 RAID DETECTED - LOCKDOWN ENABLED')
-        .setTimestamp()
-      ]
-    });
-  }
-  
-  setTimeout(() => {
-    isRaidMode = false;
-    console.log('✅ Raid mode disabled');
-  }, AUTOMOD_CONFIG.raid.lockdownMinutes * 60 * 1000);
 }
 
 // ============================================
 // TICKET SYSTEM
 // ============================================
 function createTicketEmbed() {
-  const embed = new EmbedBuilder()
-    .setColor('#3498DB')
-    .setTitle('🎫 Support Tickets')
-    .setDescription(`
-Need help? Create a support ticket!
-
-**Ticket Categories:**
-• 💬 **General Support** - Questions about the server
-• 🐛 **Bug Report** - Report Lumist.ai issues
-• 🎓 **Alumni Verification** - Verify your SAT score
-
-Click the button below to open a ticket.
-    `);
-
-  return { embeds: [embed], components: [new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('create_ticket').setLabel('🎫 Create Ticket').setStyle(ButtonStyle.Primary)
-  )] };
+  return {
+    embeds: [new EmbedBuilder()
+      .setColor('#3498DB')
+      .setTitle('🎫 Need Help?')
+      .setDescription('Click below to create a support ticket.\n\n**Response Time:** Usually within a few hours')
+    ],
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('create_ticket').setLabel('📩 Create Ticket').setStyle(ButtonStyle.Primary)
+    )]
+  };
 }
 
 function createTicketCategorySelect() {
   return {
-    embeds: [new EmbedBuilder().setColor('#3498DB').setTitle('Select Ticket Category')],
+    embeds: [new EmbedBuilder().setColor('#3498DB').setTitle('🎫 What do you need help with?')],
     components: [new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('ticket_category')
-        .setPlaceholder('Select a category')
+        .setPlaceholder('Select category')
         .addOptions([
-          { label: 'General Support', value: 'general', emoji: '💬' },
+          { label: 'General Support', value: 'general', emoji: '❓' },
           { label: 'Bug Report', value: 'bug', emoji: '🐛' },
           { label: 'Alumni Verification', value: 'alumni', emoji: '🎓' },
         ])
@@ -863,7 +1110,7 @@ function createCompletionMessage() {
     embeds: [new EmbedBuilder()
       .setColor('#2ECC71')
       .setTitle('🎉 You\'re all set!')
-      .setDescription(`Welcome to **Lumist.ai**!\n\n📝 Introduce yourself in **#introductions**\n🔗 Link your account in **#verify**\n💬 Say hi in **#general**`)
+      .setDescription(`Welcome to **Lumist.ai**!\n\n📝 Introduce yourself in **#introductions**\n🔗 Link your account in **#verify**\n💬 Say hi in **#general**\n\n🤖 **Pro tip:** You can ask me questions anytime by mentioning me or sending a DM!`)
     ],
     components: []
   };
@@ -874,10 +1121,11 @@ function createCompletionMessage() {
 // ============================================
 client.once(Events.ClientReady, async () => {
   console.log('═══════════════════════════════════════════════════════');
-  console.log(`🦊 Lumi Bot v4.0 is online!`);
+  console.log(`🦊 Lumi Bot v4.1 is online!`);
   console.log(`   Logged in as: ${client.user.tag}`);
   console.log(`   Serving guild: ${GUILD_ID}`);
   console.log(`   Analytics: ${SUPABASE_SERVICE_KEY ? 'ENABLED' : 'DISABLED'}`);
+  console.log(`   AI Chatbot: ${AI_ENABLED ? 'ENABLED' : 'DISABLED'}`);
   console.log(`   Started at: ${new Date().toISOString()}`);
   console.log('═══════════════════════════════════════════════════════');
   
@@ -886,11 +1134,7 @@ client.once(Events.ClientReady, async () => {
   // Start analytics collection
   if (SUPABASE_SERVICE_KEY) {
     console.log(`📊 Starting analytics collection (every ${ANALYTICS_INTERVAL / 1000}s)...`);
-    
-    // Initial collection
     setTimeout(() => collectServerStats(), 5000);
-    
-    // Regular interval
     setInterval(collectServerStats, ANALYTICS_INTERVAL);
   }
   
@@ -901,6 +1145,7 @@ client.once(Events.ClientReady, async () => {
   console.log('   • Slash commands');
   console.log('   • Ticket system');
   console.log('   • Analytics pipeline');
+  if (AI_ENABLED) console.log('   • AI Customer Support Chatbot');
   console.log('');
 });
 
@@ -910,10 +1155,8 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.GuildMemberAdd, async (member) => {
   console.log(`👋 New member joined: ${member.user.tag}`);
   
-  // Log analytics event
   await logMemberEvent('join', member);
   
-  // Raid detection
   joinHistory.push(Date.now());
   const now = Date.now();
   while (joinHistory.length > 0 && now - joinHistory[0] > AUTOMOD_CONFIG.raid.timeWindow) {
@@ -955,7 +1198,6 @@ client.on(Events.GuildMemberAdd, async (member) => {
 client.on(Events.GuildMemberRemove, async (member) => {
   console.log(`👋 Member left: ${member.user.tag}`);
   
-  // Check if they had completed onboarding
   const hadMemberRole = member.roles.cache.some(r => r.name === ROLES.MEMBER);
   
   await logMemberEvent('leave', member, {
@@ -965,12 +1207,41 @@ client.on(Events.GuildMemberRemove, async (member) => {
 });
 
 // ============================================
-// EVENT: MESSAGE CREATE (Auto-Mod + Analytics)
+// EVENT: MESSAGE CREATE (Auto-Mod + AI Chat)
 // ============================================
 client.on(Events.MessageCreate, async (message) => {
-  // Track for analytics
-  trackMessage(message);
+  // Track for analytics (only guild messages)
+  if (message.guild) trackMessage(message);
   
+  // Check if this should trigger AI response
+  if (AI_ENABLED && shouldTriggerAI(message)) {
+    const content = extractMessageContent(message);
+    
+    // Ignore empty messages (just a mention with nothing else)
+    if (!content || content.length === 0) {
+      await message.reply('Hey! How can I help you? Ask me anything about Lumist.ai or the SAT! 🦊');
+      return;
+    }
+    
+    // Check cooldown
+    if (isOnCooldown(message.author.id)) {
+      return; // Silently ignore
+    }
+    
+    // Set cooldown
+    aiCooldowns.set(message.author.id, Date.now());
+    
+    // Show typing indicator
+    await message.channel.sendTyping();
+    
+    // Get AI response
+    const aiResult = await getAIResponse(message, content);
+    await handleAIResponse(message, aiResult);
+    
+    return; // Don't process auto-mod for AI messages
+  }
+  
+  // Auto-mod (only for guild messages from non-bots, non-staff)
   if (message.author.bot || !message.guild) return;
   if (isStaff(message.member)) return;
   
@@ -997,13 +1268,12 @@ client.on(Events.MessageCreate, async (message) => {
 });
 
 // ============================================
-// EVENT: ROLE UPDATES (Track verification/premium)
+// EVENT: ROLE UPDATES
 // ============================================
 client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
   const oldRoles = oldMember.roles.cache;
   const newRoles = newMember.roles.cache;
   
-  // Check for Verified role added
   const verifiedRole = newRoles.find(r => r.name === ROLES.VERIFIED);
   const hadVerified = oldRoles.some(r => r.name === ROLES.VERIFIED);
   if (verifiedRole && !hadVerified) {
@@ -1011,7 +1281,6 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
     console.log(`✅ ${newMember.user.tag} is now verified`);
   }
   
-  // Check for Premium role added
   const premiumRole = newRoles.find(r => r.name === ROLES.PREMIUM);
   const hadPremium = oldRoles.some(r => r.name === ROLES.PREMIUM);
   if (premiumRole && !hadPremium) {
@@ -1019,7 +1288,6 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
     console.log(`💎 ${newMember.user.tag} is now premium`);
   }
   
-  // Check for Premium role removed
   if (!premiumRole && hadPremium) {
     await logMemberEvent('premium_removed', newMember);
     console.log(`📉 ${newMember.user.tag} lost premium`);
@@ -1033,6 +1301,66 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // ---- SLASH COMMANDS ----
   if (interaction.isChatInputCommand()) {
     const { commandName, options } = interaction;
+    
+    // NEW: /ask command for AI
+    if (commandName === 'ask') {
+      if (!AI_ENABLED) {
+        return interaction.reply({ content: '❌ AI chatbot is not configured.', ephemeral: true });
+      }
+      
+      const question = options.getString('question');
+      
+      // Check cooldown
+      if (isOnCooldown(interaction.user.id)) {
+        return interaction.reply({ content: '⏳ Please wait a moment before asking another question.', ephemeral: true });
+      }
+      
+      aiCooldowns.set(interaction.user.id, Date.now());
+      
+      await interaction.deferReply();
+      
+      // Create a pseudo-message object for the AI handler
+      const pseudoMessage = {
+        author: interaction.user,
+        channel: interaction.channel,
+        guild: interaction.guild,
+        content: question,
+        url: `https://discord.com/channels/${interaction.guild?.id || '@me'}/${interaction.channel.id}`,
+      };
+      
+      const aiResult = await getAIResponse(pseudoMessage, question);
+      
+      if (aiResult.error) {
+        await interaction.editReply('⚠️ Sorry, I\'m having trouble processing your request. Please try again or use `/ticket`.');
+      } else if (aiResult.escalate) {
+        await interaction.editReply(aiResult.response || 'I\'m connecting you with our support team.');
+        // Trigger escalation notification
+        if (INTERNAL_CHAT_CHANNEL_ID) {
+          const internalChannel = await client.channels.fetch(INTERNAL_CHAT_CHANNEL_ID).catch(() => null);
+          if (internalChannel) {
+            await internalChannel.send({
+              content: '@here Human support needed!',
+              embeds: [new EmbedBuilder()
+                .setColor('#E74C3C')
+                .setTitle('🚨 Support Escalation')
+                .addFields(
+                  { name: 'User', value: `${interaction.user.tag}`, inline: true },
+                  { name: 'Question', value: question.substring(0, 1000) }
+                )
+              ]
+            });
+          }
+        }
+      } else {
+        const response = aiResult.response || 'I couldn\'t generate a response. Please try again.';
+        if (response.length <= 2000) {
+          await interaction.editReply(response);
+        } else {
+          await interaction.editReply(response.substring(0, 1997) + '...');
+        }
+      }
+      return;
+    }
     
     if (commandName === 'warn') {
       const user = options.getUser('user');
@@ -1204,7 +1532,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         
         await interaction.update(createCompletionMessage());
         
-        // Log onboarding completion
         await logMemberEvent('onboarding_complete', member, {
           nationality: state.nationality,
           grade: state.grade,
