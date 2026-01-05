@@ -42,7 +42,8 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const ANALYTICS_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 // n8n Chatbot Configuration
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL; // e.g., https://your-n8n.app.n8n.cloud/webhook/lumist-chat
+// Use the Discord webhook handler (which then calls lumist-chat internally)
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://n8n.lumist.ai/webhook/discord-webhook';
 const CHATBOT_CHANNEL_ID = process.env.CHATBOT_CHANNEL_ID; // Optional: dedicated channel for chatbot
 
 if (!BOT_TOKEN) {
@@ -55,7 +56,7 @@ if (!SUPABASE_SERVICE_KEY) {
 }
 
 if (!N8N_WEBHOOK_URL) {
-  console.warn('⚠️ Warning: N8N_WEBHOOK_URL not set - chatbot disabled');
+  console.warn('⚠️ Warning: N8N_WEBHOOK_URL not set - using default: https://n8n.lumist.ai/webhook/discord-webhook');
 }
 
 // ============================================
