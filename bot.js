@@ -1,5 +1,5 @@
 /**
- * Lumist.ai Discord Bot v4.1
+ * Lumist.ai Discord Bot v4.2
  * 
  * Features:
  * - Onboarding system
@@ -7,7 +7,8 @@
  * - Slash commands
  * - Ticket system
  * - Analytics pipeline (Supabase integration)
- * - AI Chatbot via n8n (NEW)
+ * - AI Chatbot via n8n
+ * - Escalation System (NEW)
  */
 
 const {
@@ -39,12 +40,15 @@ const PORT = process.env.PORT || 3000;
 // Supabase Configuration
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://jkcdwriffpfoyrtqqtzt.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const ANALYTICS_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const ANALYTICS_INTERVAL = 5 * 60 * 1000;
 
 // n8n Chatbot Configuration
-// Use the Discord webhook handler (which then calls lumist-chat internally)
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://n8n.lumist.ai/webhook/discord-webhook';
-const CHATBOT_CHANNEL_ID = process.env.CHATBOT_CHANNEL_ID; // Optional: dedicated channel for chatbot
+const CHATBOT_CHANNEL_ID = process.env.CHATBOT_CHANNEL_ID;
+
+// Escalation Configuration
+const N8N_ESCALATION_URL = process.env.N8N_ESCALATION_URL || 'https://n8n.lumist.ai/webhook';
+const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID;
 
 if (!BOT_TOKEN) {
   console.error('❌ Error: BOT_TOKEN environment variable is not set');
@@ -53,10 +57,6 @@ if (!BOT_TOKEN) {
 
 if (!SUPABASE_SERVICE_KEY) {
   console.warn('⚠️ Warning: SUPABASE_SERVICE_KEY not set - analytics disabled');
-}
-
-if (!N8N_WEBHOOK_URL) {
-  console.warn('⚠️ Warning: N8N_WEBHOOK_URL not set - using default: https://n8n.lumist.ai/webhook/discord-webhook');
 }
 
 // ============================================
@@ -86,17 +86,15 @@ const AUTOMOD_CONFIG = {
   },
 };
 
-// Channel names
 const CHANNELS = {
   INTRODUCTIONS: 'introductions',
   WELCOME: 'welcome',
   RULES: 'rules',
   MOD_LOGS: 'mod-logs',
   SUPPORT_TICKETS: 'support-tickets',
-  ASK_LUMI: 'ask-lumi', // Optional dedicated chatbot channel
+  ASK_LUMI: 'ask-lumi',
 };
 
-// Roles
 const ROLES = {
   MEMBER: '🌱 Member',
   VERIFIED: '✅ Verified',
@@ -105,7 +103,6 @@ const ROLES = {
   MODERATOR: '🛡️ Moderator',
   ADMIN: '⚙️ Admin',
   FOUNDER: '👑 Founder',
-  // Nationality
   VIETNAM: '🇻🇳 Vietnam',
   USA: '🇺🇸 United States',
   UK: '🇬🇧 United Kingdom',
@@ -115,7 +112,6 @@ const ROLES = {
   CHINA: '🇨🇳 China',
   INDIA: '🇮🇳 India',
   OTHER: '🌏 Other International',
-  // Grade levels
   FRESHMAN: '🎒 Freshman',
   SOPHOMORE: '🎒 Sophomore',
   JUNIOR: '🎒 Junior',
@@ -123,7 +119,6 @@ const ROLES = {
   GAP_YEAR: '🎒 Gap Year',
 };
 
-// Nationality mapping for analytics
 const NATIONALITY_MAP = {
   [ROLES.VIETNAM]: 'vietnam',
   [ROLES.USA]: 'usa',
@@ -136,7 +131,6 @@ const NATIONALITY_MAP = {
   [ROLES.OTHER]: 'other',
 };
 
-// Grade mapping for analytics
 const GRADE_MAP = {
   [ROLES.FRESHMAN]: 'freshman',
   [ROLES.SOPHOMORE]: 'sophomore',
@@ -144,30 +138,6 @@ const GRADE_MAP = {
   [ROLES.SENIOR]: 'senior',
   [ROLES.GAP_YEAR]: 'gap_year',
 };
-
-// ============================================
-// HTTP SERVER (Health Check)
-// ============================================
-const server = http.createServer((req, res) => {
-  if (req.url === '/' || req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      status: 'ok',
-      bot: client.user ? client.user.tag : 'connecting...',
-      uptime: process.uptime(),
-      analyticsEnabled: !!SUPABASE_SERVICE_KEY,
-      chatbotEnabled: !!N8N_WEBHOOK_URL,
-      timestamp: new Date().toISOString()
-    }));
-  } else {
-    res.writeHead(404);
-    res.end('Not Found');
-  }
-});
-
-server.listen(PORT, () => {
-  console.log(`🌐 Health check server running on port ${PORT}`);
-});
 
 // ============================================
 // BOT CLIENT
@@ -182,7 +152,7 @@ const client = new Client({
     GatewayIntentBits.GuildModeration,
     GatewayIntentBits.GuildPresences,
   ],
-  partials: [Partials.Channel, Partials.Message], // Required for DMs
+  partials: [Partials.Channel, Partials.Message],
 });
 
 // ============================================
@@ -195,23 +165,432 @@ const joinHistory = [];
 const userWarnings = new Map();
 const activeTickets = new Map();
 let isRaidMode = false;
-
-// Analytics tracking
 const channelMessageCounts = new Map();
-
-// Chatbot cooldown (prevent spam)
 const chatbotCooldown = new Map();
-const CHATBOT_COOLDOWN_MS = 2000; // 2 seconds between messages
+const CHATBOT_COOLDOWN_MS = 2000;
+
+// Escalation tracking
+const escalationThreads = new Map();
+const escalationMessages = new Map();
+
+// ============================================
+// HTTP SERVER (Health Check + Escalation)
+// ============================================
+const server = http.createServer(async (req, res) => {
+  const parseBody = () => {
+    return new Promise((resolve) => {
+      let body = '';
+      req.on('data', chunk => body += chunk.toString());
+      req.on('end', () => {
+        try { resolve(body ? JSON.parse(body) : {}); }
+        catch (e) { resolve({}); }
+      });
+    });
+  };
+
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
+
+  if ((req.url === '/' || req.url === '/health') && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      bot: client.user ? client.user.tag : 'connecting...',
+      uptime: process.uptime(),
+      analyticsEnabled: !!SUPABASE_SERVICE_KEY,
+      chatbotEnabled: !!N8N_WEBHOOK_URL,
+      escalationEnabled: true,
+      timestamp: new Date().toISOString()
+    }));
+    return;
+  }
+
+  if (req.url === '/escalation/create' && req.method === 'POST') {
+    try {
+      const data = await parseBody();
+      const result = await createEscalationEmbed(data);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (error) {
+      console.error('❌ Escalation create error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: error.message }));
+    }
+    return;
+  }
+
+  if (req.url === '/escalation/message' && req.method === 'POST') {
+    try {
+      const data = await parseBody();
+      const result = await forwardUserMessageToThread(data);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (error) {
+      console.error('❌ Escalation message error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: error.message }));
+    }
+    return;
+  }
+
+  if (req.url === '/escalation/update' && req.method === 'POST') {
+    try {
+      const data = await parseBody();
+      const result = await updateEscalationEmbed(data);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (error) {
+      console.error('❌ Escalation update error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: error.message }));
+    }
+    return;
+  }
+
+  res.writeHead(404);
+  res.end('Not Found');
+});
+
+server.listen(PORT, () => {
+  console.log(`🌐 Health check server running on port ${PORT}`);
+});
+
+// ============================================
+// ESCALATION FUNCTIONS
+// ============================================
+async function createEscalationEmbed(data) {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  
+  let modLogChannel;
+  if (MOD_LOG_CHANNEL_ID) {
+    modLogChannel = await guild.channels.fetch(MOD_LOG_CHANNEL_ID);
+  } else {
+    modLogChannel = await findChannel(guild, CHANNELS.MOD_LOGS);
+  }
+  
+  if (!modLogChannel) throw new Error('Mod log channel not found');
+
+  const priorityConfig = {
+    urgent: { color: '#FF0000', emoji: '🔴', pingRole: true },
+    high: { color: '#FFA500', emoji: '🟠', pingRole: true },
+    medium: { color: '#FFFF00', emoji: '🟡', pingRole: false },
+    low: { color: '#00FF00', emoji: '🟢', pingRole: false }
+  };
+
+  const config = priorityConfig[data.priority] || priorityConfig.medium;
+
+  const embed = new EmbedBuilder()
+    .setColor(config.color)
+    .setTitle(`🎫 New Escalation [${(data.priority || 'medium').toUpperCase()}]`)
+    .addFields(
+      { name: 'Platform', value: data.source_platform || 'Unknown', inline: true },
+      { name: 'User', value: data.user_context?.platform_username || 'Unknown', inline: true },
+      { name: 'Team', value: data.team || 'support', inline: true }
+    );
+
+  if (data.trigger_reason) {
+    embed.addFields({ name: 'Trigger', value: data.trigger_reason, inline: false });
+  }
+
+  if (data.sales_context?.sales_stage) {
+    embed.addFields(
+      { name: 'Sales Stage', value: data.sales_context.sales_stage, inline: true },
+      { name: 'Qualified', value: data.sales_context.is_qualified ? '✅ Yes' : '❌ No', inline: true }
+    );
+  }
+
+  if (data.last_messages?.length > 0) {
+    const lastMsg = data.last_messages[data.last_messages.length - 1];
+    const content = lastMsg.content || lastMsg.message || '';
+    const truncated = content.length > 200 ? content.substring(0, 197) + '...' : content;
+    embed.addFields({ name: 'Last Message', value: `"${truncated}"`, inline: false });
+  }
+
+  embed.setFooter({ text: `Escalation ID: ${data.escalation_id}` });
+  embed.setTimestamp();
+
+  const buttons = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`claim_escalation_${data.escalation_id}`).setLabel('🙋 Claim Ticket').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`view_history_${data.escalation_id}`).setLabel('👁️ View History').setStyle(ButtonStyle.Secondary)
+  );
+
+  let messageContent = '';
+  if (config.pingRole) {
+    const modRole = await findRole(guild, ROLES.MODERATOR);
+    if (modRole) messageContent = `<@&${modRole.id}> `;
+  }
+  messageContent += `${config.emoji} **${(data.priority || 'medium').toUpperCase()}** priority escalation`;
+
+  const message = await modLogChannel.send({ content: messageContent, embeds: [embed], components: [buttons] });
+  escalationMessages.set(message.id, data.escalation_id);
+  console.log(`🎫 Created escalation embed for ${data.escalation_id}`);
+
+  return { success: true, discord_message_id: message.id, discord_channel_id: modLogChannel.id };
+}
+
+async function forwardUserMessageToThread(data) {
+  const { thread_id, message, user_name } = data;
+  if (!thread_id) return { success: false, error: 'No thread ID provided' };
+
+  try {
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const thread = await guild.channels.fetch(thread_id);
+    if (!thread || !thread.isThread()) return { success: false, error: 'Thread not found' };
+
+    const embed = new EmbedBuilder()
+      .setColor('#5865F2')
+      .setAuthor({ name: `💬 ${user_name || 'User'}` })
+      .setDescription(message)
+      .setTimestamp();
+
+    await thread.send({ embeds: [embed] });
+    console.log(`💬 Forwarded user message to thread ${thread_id}`);
+    return { success: true };
+  } catch (error) {
+    console.error('❌ Error forwarding to thread:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function updateEscalationEmbed(data) {
+  const { escalation_id, message_id, channel_id, agent_name, action } = data;
+
+  try {
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const channel = await guild.channels.fetch(channel_id);
+    const message = await channel.messages.fetch(message_id);
+    if (!message) return { success: false, error: 'Message not found' };
+
+    const existingEmbed = message.embeds[0];
+    if (!existingEmbed) return { success: false, error: 'No embed found' };
+
+    const newEmbed = EmbedBuilder.from(existingEmbed);
+
+    if (action === 'claimed') {
+      newEmbed.setTitle(`🎫 Escalation [CLAIMED]`).setColor('#3498DB');
+      newEmbed.addFields(
+        { name: 'Assigned To', value: agent_name || 'Unknown', inline: true },
+        { name: 'Claimed At', value: new Date().toLocaleTimeString(), inline: true }
+      );
+
+      const newButtons = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`resolve_escalation_${escalation_id}`).setLabel('✅ Resolve').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`return_to_ai_${escalation_id}`).setLabel('🤖 Return to AI').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`open_thread_${escalation_id}`).setLabel('💬 Open Thread').setStyle(ButtonStyle.Primary)
+      );
+      await message.edit({ embeds: [newEmbed], components: [newButtons] });
+    } else if (action === 'resolved' || action === 'returned_to_ai') {
+      const statusText = action === 'resolved' ? 'RESOLVED' : 'RETURNED TO AI';
+      const statusColor = action === 'resolved' ? '#2ECC71' : '#9B59B6';
+      newEmbed.setTitle(`🎫 Escalation [${statusText}]`).setColor(statusColor);
+      newEmbed.addFields({ name: 'Resolved By', value: agent_name || 'Unknown', inline: true });
+      await message.edit({ embeds: [newEmbed], components: [] });
+    }
+
+    console.log(`📝 Updated escalation embed: ${action}`);
+    return { success: true };
+  } catch (error) {
+    console.error('❌ Error updating embed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function createEscalationThread(escalationId, message, userName, platform) {
+  try {
+    const threadName = `🎫 ${platform} - ${userName}`.substring(0, 100);
+    const thread = await message.startThread({ name: threadName, autoArchiveDuration: 1440 });
+    escalationThreads.set(thread.id, escalationId);
+
+    await thread.send({
+      embeds: [new EmbedBuilder()
+        .setColor('#3498DB')
+        .setTitle('📜 Escalation Thread Started')
+        .setDescription('Messages you send here will be forwarded to the user.\nUser replies will appear in this thread.')
+        .setFooter({ text: `Escalation ID: ${escalationId}` })]
+    });
+
+    console.log(`🧵 Created thread ${thread.id} for escalation ${escalationId}`);
+    return thread;
+  } catch (error) {
+    console.error('❌ Error creating thread:', error);
+    return null;
+  }
+}
+
+async function handleClaimEscalation(interaction, escalationId) {
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const response = await fetch(`${N8N_ESCALATION_URL}/escalation-update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        escalation_id: escalationId,
+        action: 'claim',
+        agent_discord_id: interaction.user.id,
+        agent_name: interaction.user.tag,
+        claimed_via: 'discord'
+      })
+    });
+
+    const result = await response.json();
+    if (!result.success) {
+      await interaction.editReply({ content: `❌ Failed to claim: ${result.error || 'Unknown error'}` });
+      return;
+    }
+
+    const message = interaction.message;
+    const existingEmbed = message.embeds[0];
+    const platform = existingEmbed.fields?.find(f => f.name === 'Platform')?.value || 'Unknown';
+    const userName = existingEmbed.fields?.find(f => f.name === 'User')?.value || 'Unknown';
+
+    const thread = await createEscalationThread(escalationId, message, userName, platform);
+
+    const newEmbed = EmbedBuilder.from(existingEmbed);
+    newEmbed.setTitle('🎫 Escalation [CLAIMED]').setColor('#3498DB');
+    newEmbed.addFields(
+      { name: 'Assigned To', value: interaction.user.tag, inline: true },
+      { name: 'Claimed At', value: new Date().toLocaleTimeString(), inline: true }
+    );
+
+    const newButtons = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`resolve_escalation_${escalationId}`).setLabel('✅ Resolve').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`return_to_ai_${escalationId}`).setLabel('🤖 Return to AI').setStyle(ButtonStyle.Secondary)
+    );
+
+    await message.edit({ embeds: [newEmbed], components: [newButtons] });
+    await interaction.editReply({ content: `✅ Claimed! ${thread ? `Thread created: <#${thread.id}>` : 'Reply in the thread to respond.'}` });
+    console.log(`✅ ${interaction.user.tag} claimed escalation ${escalationId}`);
+  } catch (error) {
+    console.error('❌ Claim error:', error);
+    await interaction.editReply({ content: `❌ Error: ${error.message}` });
+  }
+}
+
+async function handleResolveEscalation(interaction, escalationId) {
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const response = await fetch(`${N8N_ESCALATION_URL}/escalation-update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        escalation_id: escalationId,
+        action: 'resolve',
+        agent_discord_id: interaction.user.id,
+        agent_name: interaction.user.tag,
+        resolution_type: 'resolved'
+      })
+    });
+
+    const result = await response.json();
+    if (!result.success) {
+      await interaction.editReply({ content: `❌ Failed: ${result.error}` });
+      return;
+    }
+
+    const message = interaction.message;
+    const newEmbed = EmbedBuilder.from(message.embeds[0]);
+    newEmbed.setTitle('🎫 Escalation [RESOLVED]').setColor('#2ECC71');
+    newEmbed.addFields({ name: 'Resolved By', value: interaction.user.tag, inline: true });
+
+    await message.edit({ embeds: [newEmbed], components: [] });
+
+    for (const [threadId, escId] of escalationThreads.entries()) {
+      if (escId === escalationId) { escalationThreads.delete(threadId); break; }
+    }
+
+    await interaction.editReply({ content: '✅ Escalation resolved!' });
+    console.log(`✅ ${interaction.user.tag} resolved escalation ${escalationId}`);
+  } catch (error) {
+    console.error('❌ Resolve error:', error);
+    await interaction.editReply({ content: `❌ Error: ${error.message}` });
+  }
+}
+
+async function handleReturnToAI(interaction, escalationId) {
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const response = await fetch(`${N8N_ESCALATION_URL}/escalation-update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        escalation_id: escalationId,
+        action: 'return_to_ai',
+        agent_discord_id: interaction.user.id,
+        agent_name: interaction.user.tag
+      })
+    });
+
+    const result = await response.json();
+    if (!result.success) {
+      await interaction.editReply({ content: `❌ Failed: ${result.error}` });
+      return;
+    }
+
+    const message = interaction.message;
+    const newEmbed = EmbedBuilder.from(message.embeds[0]);
+    newEmbed.setTitle('🎫 Escalation [RETURNED TO AI]').setColor('#9B59B6');
+    newEmbed.addFields({ name: 'Returned By', value: interaction.user.tag, inline: true });
+
+    await message.edit({ embeds: [newEmbed], components: [] });
+
+    for (const [threadId, escId] of escalationThreads.entries()) {
+      if (escId === escalationId) { escalationThreads.delete(threadId); break; }
+    }
+
+    await interaction.editReply({ content: '✅ Returned to AI. The chatbot will handle future messages.' });
+    console.log(`🤖 ${interaction.user.tag} returned escalation ${escalationId} to AI`);
+  } catch (error) {
+    console.error('❌ Return to AI error:', error);
+    await interaction.editReply({ content: `❌ Error: ${error.message}` });
+  }
+}
+
+async function handleViewHistory(interaction, escalationId) {
+  await interaction.deferReply({ ephemeral: true });
+  await interaction.editReply({
+    content: `📜 Conversation history for escalation \`${escalationId}\`\n\n*Full history view coming soon. Claim the ticket to see messages in the thread.*`
+  });
+}
+
+async function forwardAgentMessage(message, escalationId) {
+  try {
+    const response = await fetch(`${N8N_ESCALATION_URL}/agent-reply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        escalation_id: escalationId,
+        agent_discord_id: message.author.id,
+        agent_name: message.author.tag,
+        message: message.content,
+        reply_via: 'discord'
+      })
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      await message.react('✅');
+    } else {
+      await message.react('❌');
+      await message.reply({ content: `⚠️ Failed to send: ${result.error}`, allowedMentions: { repliedUser: false } });
+    }
+  } catch (error) {
+    console.error('❌ Forward agent message error:', error);
+    await message.react('❌');
+  }
+}
 
 // ============================================
 // N8N CHATBOT FUNCTIONS
 // ============================================
 async function sendToN8nChatbot(message, isDM = false) {
-  if (!N8N_WEBHOOK_URL) {
-    return { success: false, error: 'Chatbot not configured' };
-  }
+  if (!N8N_WEBHOOK_URL) return { success: false, error: 'Chatbot not configured' };
 
-  // Check cooldown
   const cooldownKey = message.author.id;
   const lastMessage = chatbotCooldown.get(cooldownKey);
   if (lastMessage && Date.now() - lastMessage < CHATBOT_COOLDOWN_MS) {
@@ -219,24 +598,16 @@ async function sendToN8nChatbot(message, isDM = false) {
   }
   chatbotCooldown.set(cooldownKey, Date.now());
 
-  // Extract the actual question (remove bot mention if present)
   let userMessage = message.content;
   if (!isDM && client.user) {
     userMessage = userMessage.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
   }
 
-  // Skip if empty message after removing mention
-  if (!userMessage) {
-    return { success: false, error: 'empty' };
-  }
+  if (!userMessage) return { success: false, error: 'empty' };
 
-  // Get user info for context
   let isVerified = false;
-  let lumistUserName = null;
-  
   if (message.member) {
     isVerified = message.member.roles.cache.some(r => r.name === ROLES.VERIFIED);
-    // Could fetch from database if linked
   }
 
   const payload = {
@@ -251,7 +622,6 @@ async function sendToN8nChatbot(message, isDM = false) {
     text: userMessage,
     is_dm: isDM,
     is_verified: isVerified,
-    lumist_user_name: lumistUserName,
   };
 
   try {
@@ -280,77 +650,37 @@ async function sendToN8nChatbot(message, isDM = false) {
   }
 }
 
-// Check if message should trigger chatbot
 function shouldTriggerChatbot(message) {
-  // Always respond to DMs
-  if (message.channel.type === ChannelType.DM) {
-    return true;
-  }
-
-  // Check if bot is mentioned
-  if (message.mentions.has(client.user)) {
-    return true;
-  }
-
-  // Check if in dedicated chatbot channel
-  if (CHATBOT_CHANNEL_ID && message.channel.id === CHATBOT_CHANNEL_ID) {
-    return true;
-  }
-
-  // Check if in #ask-lumi channel
-  if (message.channel.name === CHANNELS.ASK_LUMI) {
-    return true;
-  }
-
+  if (message.channel.type === ChannelType.DM) return true;
+  if (message.mentions.has(client.user)) return true;
+  if (CHATBOT_CHANNEL_ID && message.channel.id === CHATBOT_CHANNEL_ID) return true;
+  if (message.channel.name === CHANNELS.ASK_LUMI) return true;
   return false;
 }
 
-// Handle chatbot response
 async function handleChatbotMessage(message) {
   const isDM = message.channel.type === ChannelType.DM;
   
-  // Show typing indicator
-  try {
-    await message.channel.sendTyping();
-  } catch (e) {
-    // Ignore typing errors
-  }
+  try { await message.channel.sendTyping(); } catch (e) {}
 
   const result = await sendToN8nChatbot(message, isDM);
 
   if (!result.success) {
-    if (result.error === 'cooldown') {
-      // Silently ignore cooldown
-      return;
-    }
+    if (result.error === 'cooldown') return;
     if (result.error === 'empty') {
-      await message.reply({
-        content: '🦊 Hey! Did you have a question? Just ask me anything about Lumist!',
-        allowedMentions: { repliedUser: false }
-      });
+      await message.reply({ content: '🦊 Hey! Did you have a question? Just ask me anything about Lumist!', allowedMentions: { repliedUser: false } });
       return;
     }
-    
-    // Generic error
-    await message.reply({
-      content: '🦊 Oops! I had a little hiccup. Try again in a moment, or reach out to contact@lumist.ai if it keeps happening!',
-      allowedMentions: { repliedUser: false }
-    });
+    await message.reply({ content: '🦊 Oops! I had a little hiccup. Try again in a moment!', allowedMentions: { repliedUser: false } });
     return;
   }
 
-  // Send the AI response
-  const responseText = result.response || "I'm not sure how to answer that. Try asking in a different way!";
-  
-  // Split long responses (Discord has 2000 char limit)
+  const responseText = result.response || "I'm not sure how to answer that!";
   const chunks = splitMessage(responseText, 1900);
   
   for (let i = 0; i < chunks.length; i++) {
     if (i === 0) {
-      await message.reply({
-        content: chunks[i],
-        allowedMentions: { repliedUser: false }
-      });
+      await message.reply({ content: chunks[i], allowedMentions: { repliedUser: false } });
     } else {
       await message.channel.send(chunks[i]);
     }
@@ -359,7 +689,6 @@ async function handleChatbotMessage(message) {
   console.log(`💬 Chatbot replied to ${message.author.tag}${isDM ? ' (DM)' : ''}`);
 }
 
-// Split long messages
 function splitMessage(text, maxLength) {
   if (text.length <= maxLength) return [text];
   
@@ -367,22 +696,12 @@ function splitMessage(text, maxLength) {
   let remaining = text;
   
   while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining);
-      break;
-    }
+    if (remaining.length <= maxLength) { chunks.push(remaining); break; }
     
-    // Try to split at sentence end or newline
     let splitIndex = remaining.lastIndexOf('. ', maxLength);
-    if (splitIndex === -1 || splitIndex < maxLength / 2) {
-      splitIndex = remaining.lastIndexOf('\n', maxLength);
-    }
-    if (splitIndex === -1 || splitIndex < maxLength / 2) {
-      splitIndex = remaining.lastIndexOf(' ', maxLength);
-    }
-    if (splitIndex === -1) {
-      splitIndex = maxLength;
-    }
+    if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = remaining.lastIndexOf('\n', maxLength);
+    if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = remaining.lastIndexOf(' ', maxLength);
+    if (splitIndex === -1) splitIndex = maxLength;
     
     chunks.push(remaining.substring(0, splitIndex + 1));
     remaining = remaining.substring(splitIndex + 1);
@@ -392,7 +711,7 @@ function splitMessage(text, maxLength) {
 }
 
 // ============================================
-// SUPABASE ANALYTICS FUNCTIONS
+// SUPABASE ANALYTICS
 // ============================================
 async function supabaseInsert(table, data) {
   if (!SUPABASE_SERVICE_KEY) return null;
@@ -415,7 +734,6 @@ async function supabaseInsert(table, data) {
       console.error(`❌ Supabase insert error (${table}):`, error);
       return null;
     }
-    
     return true;
   } catch (error) {
     console.error(`❌ Supabase request failed (${table}):`, error.message);
@@ -423,7 +741,6 @@ async function supabaseInsert(table, data) {
   }
 }
 
-// Log member event
 async function logMemberEvent(eventType, member, metadata = {}) {
   await supabaseInsert('discord_member_events', {
     event_type: eventType,
@@ -434,7 +751,6 @@ async function logMemberEvent(eventType, member, metadata = {}) {
   console.log(`📊 Event logged: ${eventType} - ${member.user?.tag || member.tag}`);
 }
 
-// Collect and send server stats
 async function collectServerStats() {
   if (!SUPABASE_SERVICE_KEY) return;
   
@@ -443,13 +759,11 @@ async function collectServerStats() {
     const members = await guild.members.fetch();
     const roles = await guild.roles.fetch();
     
-    // Find roles
     const memberRole = roles.find(r => r.name === ROLES.MEMBER);
     const verifiedRole = roles.find(r => r.name === ROLES.VERIFIED);
     const premiumRole = roles.find(r => r.name === ROLES.PREMIUM);
     const alumniRole = roles.find(r => r.name === ROLES.ALUMNI);
     
-    // Count members by role
     const totalMembers = members.filter(m => !m.user.bot).size;
     const onlineMembers = members.filter(m => !m.user.bot && m.presence?.status !== 'offline').size;
     const botCount = members.filter(m => m.user.bot).size;
@@ -458,7 +772,6 @@ async function collectServerStats() {
     const premiumCount = premiumRole ? members.filter(m => m.roles.cache.has(premiumRole.id)).size : 0;
     const alumniCount = alumniRole ? members.filter(m => m.roles.cache.has(alumniRole.id)).size : 0;
     
-    // Insert server stats
     await supabaseInsert('discord_server_stats', {
       total_members: totalMembers,
       online_members: onlineMembers,
@@ -469,46 +782,28 @@ async function collectServerStats() {
       bot_count: botCount,
     });
     
-    // Collect nationality stats
-    const nationalityStats = {};
+    const timestamp = new Date().toISOString();
+    
     for (const [roleName, nationalityKey] of Object.entries(NATIONALITY_MAP)) {
       const role = roles.find(r => r.name === roleName);
       if (role) {
-        nationalityStats[nationalityKey] = members.filter(m => m.roles.cache.has(role.id)).size;
+        const count = members.filter(m => m.roles.cache.has(role.id)).size;
+        if (count > 0) {
+          await supabaseInsert('discord_nationality_stats', { recorded_at: timestamp, nationality: nationalityKey, member_count: count });
+        }
       }
     }
     
-    const timestamp = new Date().toISOString();
-    for (const [nationality, count] of Object.entries(nationalityStats)) {
-      if (count > 0) {
-        await supabaseInsert('discord_nationality_stats', {
-          recorded_at: timestamp,
-          nationality,
-          member_count: count,
-        });
-      }
-    }
-    
-    // Collect grade stats
-    const gradeStats = {};
     for (const [roleName, gradeKey] of Object.entries(GRADE_MAP)) {
       const role = roles.find(r => r.name === roleName);
       if (role) {
-        gradeStats[gradeKey] = members.filter(m => m.roles.cache.has(role.id)).size;
+        const count = members.filter(m => m.roles.cache.has(role.id)).size;
+        if (count > 0) {
+          await supabaseInsert('discord_grade_stats', { recorded_at: timestamp, grade: gradeKey, member_count: count });
+        }
       }
     }
     
-    for (const [grade, count] of Object.entries(gradeStats)) {
-      if (count > 0) {
-        await supabaseInsert('discord_grade_stats', {
-          recorded_at: timestamp,
-          grade,
-          member_count: count,
-        });
-      }
-    }
-    
-    // Collect funnel stats
     await supabaseInsert('discord_funnel_stats', {
       recorded_at: timestamp,
       total_joined: totalMembers,
@@ -517,7 +812,6 @@ async function collectServerStats() {
       premium: premiumCount,
     });
     
-    // Collect channel activity
     const channels = await guild.channels.fetch();
     for (const [channelId, stats] of channelMessageCounts.entries()) {
       const channel = channels.get(channelId);
@@ -533,116 +827,43 @@ async function collectServerStats() {
       }
     }
     
-    // Reset channel message counts
     channelMessageCounts.clear();
-    
     console.log(`📊 Analytics snapshot sent - ${totalMembers} members, ${onlineMembers} online`);
   } catch (error) {
     console.error('❌ Error collecting server stats:', error);
   }
 }
 
-// Track message for channel activity
 function trackMessage(message) {
   if (message.author.bot || !message.guild) return;
-  
   const channelId = message.channel.id;
   if (!channelMessageCounts.has(channelId)) {
     channelMessageCounts.set(channelId, { count: 0, users: new Set() });
   }
-  
   const stats = channelMessageCounts.get(channelId);
   stats.count++;
   stats.users.add(message.author.id);
 }
 
 // ============================================
-// SLASH COMMANDS DEFINITION
+// SLASH COMMANDS
 // ============================================
 const commands = [
-  new SlashCommandBuilder()
-    .setName('warn')
-    .setDescription('Issue a warning to a user')
-    .addUserOption(option => option.setName('user').setDescription('User to warn').setRequired(true))
-    .addStringOption(option => option.setName('reason').setDescription('Reason for warning').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
-  
-  new SlashCommandBuilder()
-    .setName('mute')
-    .setDescription('Mute a user')
-    .addUserOption(option => option.setName('user').setDescription('User to mute').setRequired(true))
-    .addIntegerOption(option => option.setName('duration').setDescription('Duration in minutes').setRequired(true).setMinValue(1).setMaxValue(40320))
-    .addStringOption(option => option.setName('reason').setDescription('Reason for mute'))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
-  
-  new SlashCommandBuilder()
-    .setName('unmute')
-    .setDescription('Unmute a user')
-    .addUserOption(option => option.setName('user').setDescription('User to unmute').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
-  
-  new SlashCommandBuilder()
-    .setName('kick')
-    .setDescription('Kick a user from the server')
-    .addUserOption(option => option.setName('user').setDescription('User to kick').setRequired(true))
-    .addStringOption(option => option.setName('reason').setDescription('Reason for kick'))
-    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
-  
-  new SlashCommandBuilder()
-    .setName('ban')
-    .setDescription('Ban a user from the server')
-    .addUserOption(option => option.setName('user').setDescription('User to ban').setRequired(true))
-    .addStringOption(option => option.setName('reason').setDescription('Reason for ban'))
-    .addIntegerOption(option => option.setName('days').setDescription('Days of messages to delete (0-7)').setMinValue(0).setMaxValue(7))
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
-  
-  new SlashCommandBuilder()
-    .setName('warnings')
-    .setDescription('Check warnings for a user')
-    .addUserOption(option => option.setName('user').setDescription('User to check').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
-  
-  new SlashCommandBuilder()
-    .setName('clearwarnings')
-    .setDescription('Clear all warnings for a user')
-    .addUserOption(option => option.setName('user').setDescription('User to clear warnings for').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  
-  new SlashCommandBuilder()
-    .setName('purge')
-    .setDescription('Delete multiple messages')
-    .addIntegerOption(option => option.setName('amount').setDescription('Number of messages to delete (1-100)').setRequired(true).setMinValue(1).setMaxValue(100))
-    .addUserOption(option => option.setName('user').setDescription('Only delete messages from this user'))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
-  
-  new SlashCommandBuilder()
-    .setName('ticket')
-    .setDescription('Create a support ticket'),
-  
-  new SlashCommandBuilder()
-    .setName('close')
-    .setDescription('Close the current ticket')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
-  
-  new SlashCommandBuilder()
-    .setName('setuptickets')
-    .setDescription('Set up the ticket system in the current channel')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  
-  new SlashCommandBuilder()
-    .setName('stats')
-    .setDescription('Show server statistics')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  
-  new SlashCommandBuilder()
-    .setName('ask')
-    .setDescription('Ask Lumi a question about Lumist.ai')
-    .addStringOption(option => option.setName('question').setDescription('Your question').setRequired(true)),
-].map(command => command.toJSON());
+  new SlashCommandBuilder().setName('warn').setDescription('Issue a warning').addUserOption(o => o.setName('user').setDescription('User').setRequired(true)).addStringOption(o => o.setName('reason').setDescription('Reason').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  new SlashCommandBuilder().setName('mute').setDescription('Mute a user').addUserOption(o => o.setName('user').setDescription('User').setRequired(true)).addIntegerOption(o => o.setName('duration').setDescription('Minutes').setRequired(true).setMinValue(1).setMaxValue(40320)).addStringOption(o => o.setName('reason').setDescription('Reason')).setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  new SlashCommandBuilder().setName('unmute').setDescription('Unmute a user').addUserOption(o => o.setName('user').setDescription('User').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  new SlashCommandBuilder().setName('kick').setDescription('Kick a user').addUserOption(o => o.setName('user').setDescription('User').setRequired(true)).addStringOption(o => o.setName('reason').setDescription('Reason')).setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
+  new SlashCommandBuilder().setName('ban').setDescription('Ban a user').addUserOption(o => o.setName('user').setDescription('User').setRequired(true)).addStringOption(o => o.setName('reason').setDescription('Reason')).addIntegerOption(o => o.setName('days').setDescription('Delete days (0-7)').setMinValue(0).setMaxValue(7)).setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
+  new SlashCommandBuilder().setName('warnings').setDescription('Check warnings').addUserOption(o => o.setName('user').setDescription('User').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  new SlashCommandBuilder().setName('clearwarnings').setDescription('Clear warnings').addUserOption(o => o.setName('user').setDescription('User').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('purge').setDescription('Delete messages').addIntegerOption(o => o.setName('amount').setDescription('Amount (1-100)').setRequired(true).setMinValue(1).setMaxValue(100)).addUserOption(o => o.setName('user').setDescription('Filter by user')).setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+  new SlashCommandBuilder().setName('ticket').setDescription('Create a support ticket'),
+  new SlashCommandBuilder().setName('close').setDescription('Close ticket').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+  new SlashCommandBuilder().setName('setuptickets').setDescription('Setup ticket system').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('stats').setDescription('Server stats').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('ask').setDescription('Ask Lumi a question').addStringOption(o => o.setName('question').setDescription('Your question').setRequired(true)),
+].map(c => c.toJSON());
 
-// ============================================
-// REGISTER SLASH COMMANDS
-// ============================================
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
   try {
@@ -668,29 +889,21 @@ async function findChannel(guild, channelName) {
 }
 
 function isStaff(member) {
-  return member.permissions.has(PermissionFlagsBits.ManageMessages) ||
-         member.permissions.has(PermissionFlagsBits.Administrator);
+  return member.permissions.has(PermissionFlagsBits.ManageMessages) || member.permissions.has(PermissionFlagsBits.Administrator);
 }
 
 function getNationalityRole(value) {
-  const map = {
-    'vietnam': ROLES.VIETNAM, 'usa': ROLES.USA, 'uk': ROLES.UK,
-    'singapore': ROLES.SINGAPORE, 'korea': ROLES.KOREA, 'japan': ROLES.JAPAN,
-    'china': ROLES.CHINA, 'india': ROLES.INDIA, 'other': ROLES.OTHER,
-  };
+  const map = { 'vietnam': ROLES.VIETNAM, 'usa': ROLES.USA, 'uk': ROLES.UK, 'singapore': ROLES.SINGAPORE, 'korea': ROLES.KOREA, 'japan': ROLES.JAPAN, 'china': ROLES.CHINA, 'india': ROLES.INDIA, 'other': ROLES.OTHER };
   return map[value];
 }
 
 function getGradeRole(value) {
-  const map = {
-    'freshman': ROLES.FRESHMAN, 'sophomore': ROLES.SOPHOMORE,
-    'junior': ROLES.JUNIOR, 'senior': ROLES.SENIOR, 'gap_year': ROLES.GAP_YEAR,
-  };
+  const map = { 'freshman': ROLES.FRESHMAN, 'sophomore': ROLES.SOPHOMORE, 'junior': ROLES.JUNIOR, 'senior': ROLES.SENIOR, 'gap_year': ROLES.GAP_YEAR };
   return map[value];
 }
 
 // ============================================
-// MOD LOGGING
+// MOD LOGGING & WARNINGS
 // ============================================
 async function logModAction(guild, action, target, moderator, reason, color = '#E74C3C') {
   const modLogChannel = await findChannel(guild, CHANNELS.MOD_LOGS);
@@ -710,21 +923,12 @@ async function logModAction(guild, action, target, moderator, reason, color = '#
   await modLogChannel.send({ embeds: [embed] });
 }
 
-// ============================================
-// WARNING SYSTEM
-// ============================================
 function getWarnings(userId) {
   const warnings = userWarnings.get(userId) || [];
   const now = Date.now();
-  const validWarnings = warnings.filter(w => 
-    now - w.timestamp < AUTOMOD_CONFIG.warnings.expireDays * 24 * 60 * 60 * 1000
-  );
+  const validWarnings = warnings.filter(w => now - w.timestamp < AUTOMOD_CONFIG.warnings.expireDays * 24 * 60 * 60 * 1000);
   userWarnings.set(userId, validWarnings);
   return validWarnings;
-}
-
-function getWarningCount(userId) {
-  return getWarnings(userId).length;
 }
 
 function addWarning(userId, reason, moderator = 'Auto-Mod') {
@@ -734,9 +938,7 @@ function addWarning(userId, reason, moderator = 'Auto-Mod') {
   return warnings.length;
 }
 
-function clearWarnings(userId) {
-  userWarnings.delete(userId);
-}
+function clearWarnings(userId) { userWarnings.delete(userId); }
 
 async function executeWarningAction(member, warningCount, reason, guild) {
   const action = AUTOMOD_CONFIG.warnings.escalation[warningCount] || 'warn';
@@ -749,21 +951,17 @@ async function executeWarningAction(member, warningCount, reason, guild) {
         break;
       case 'mute_1h':
         await member.timeout(60 * 60 * 1000, reason);
-        await member.send(`🔇 **You have been muted for 1 hour**\nReason: ${reason}`).catch(() => {});
         await logModAction(guild, 'Muted (1 hour)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#E67E22');
         break;
       case 'mute_24h':
         await member.timeout(24 * 60 * 60 * 1000, reason);
-        await member.send(`🔇 **You have been muted for 24 hours**\nReason: ${reason}`).catch(() => {});
         await logModAction(guild, 'Muted (24 hours)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#E74C3C');
         break;
       case 'ban_7d':
-        await member.send(`🚫 **You have been banned**\nReason: ${reason}`).catch(() => {});
         await member.ban({ deleteMessageSeconds: 86400, reason });
         await logModAction(guild, 'Banned (7 days)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#992D22');
         break;
       case 'ban_permanent':
-        await member.send(`🚫 **You have been permanently banned**\nReason: ${reason}`).catch(() => {});
         await member.ban({ deleteMessageSeconds: 86400, reason });
         await logModAction(guild, 'Banned (Permanent)', member.user, 'Auto-Mod', `${reason} (Warning #${warningCount})`, '#1a1a1a');
         break;
@@ -825,20 +1023,13 @@ function checkLinks(message) {
   for (const url of matches) {
     try {
       const hostname = new URL(url).hostname.toLowerCase();
-      const isAllowed = AUTOMOD_CONFIG.links.allowedDomains.some(domain => 
-        hostname === domain || hostname.endsWith('.' + domain)
-      );
+      const isAllowed = AUTOMOD_CONFIG.links.allowedDomains.some(domain => hostname === domain || hostname.endsWith('.' + domain));
       if (!isAllowed) return true;
-    } catch {
-      return true;
-    }
+    } catch { return true; }
   }
   return false;
 }
 
-// ============================================
-// RAID PROTECTION
-// ============================================
 function checkForRaid() {
   if (!AUTOMOD_CONFIG.raid.enabled) return false;
   const now = Date.now();
@@ -853,19 +1044,10 @@ async function enableRaidMode(guild) {
   
   const modLogChannel = await findChannel(guild, CHANNELS.MOD_LOGS);
   if (modLogChannel) {
-    await modLogChannel.send({
-      embeds: [new EmbedBuilder()
-        .setColor('#FF0000')
-        .setTitle('🚨 RAID DETECTED - LOCKDOWN ENABLED')
-        .setTimestamp()
-      ]
-    });
+    await modLogChannel.send({ embeds: [new EmbedBuilder().setColor('#FF0000').setTitle('🚨 RAID DETECTED - LOCKDOWN ENABLED').setTimestamp()] });
   }
   
-  setTimeout(() => {
-    isRaidMode = false;
-    console.log('✅ Raid mode disabled');
-  }, AUTOMOD_CONFIG.raid.lockdownMinutes * 60 * 1000);
+  setTimeout(() => { isRaidMode = false; console.log('✅ Raid mode disabled'); }, AUTOMOD_CONFIG.raid.lockdownMinutes * 60 * 1000);
 }
 
 // ============================================
@@ -875,16 +1057,7 @@ function createTicketEmbed() {
   const embed = new EmbedBuilder()
     .setColor('#3498DB')
     .setTitle('🎫 Support Tickets')
-    .setDescription(`
-Need help? Create a support ticket!
-
-**Ticket Categories:**
-• 💬 **General Support** - Questions about the server
-• 🐛 **Bug Report** - Report Lumist.ai issues
-• 🎓 **Alumni Verification** - Verify your SAT score
-
-Click the button below to open a ticket.
-    `);
+    .setDescription('Need help? Create a support ticket!\n\n**Categories:**\n• 💬 General Support\n• 🐛 Bug Report\n• 🎓 Alumni Verification');
 
   return { embeds: [embed], components: [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('create_ticket').setLabel('🎫 Create Ticket').setStyle(ButtonStyle.Primary)
@@ -895,23 +1068,18 @@ function createTicketCategorySelect() {
   return {
     embeds: [new EmbedBuilder().setColor('#3498DB').setTitle('Select Ticket Category')],
     components: [new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('ticket_category')
-        .setPlaceholder('Select a category')
-        .addOptions([
-          { label: 'General Support', value: 'general', emoji: '💬' },
-          { label: 'Bug Report', value: 'bug', emoji: '🐛' },
-          { label: 'Alumni Verification', value: 'alumni', emoji: '🎓' },
-        ])
+      new StringSelectMenuBuilder().setCustomId('ticket_category').setPlaceholder('Select a category').addOptions([
+        { label: 'General Support', value: 'general', emoji: '💬' },
+        { label: 'Bug Report', value: 'bug', emoji: '🐛' },
+        { label: 'Alumni Verification', value: 'alumni', emoji: '🎓' },
+      ])
     )],
     ephemeral: true
   };
 }
 
 async function createTicketChannel(guild, user, category) {
-  if (activeTickets.has(user.id)) {
-    return { error: `You already have an open ticket: <#${activeTickets.get(user.id)}>` };
-  }
+  if (activeTickets.has(user.id)) return { error: `You already have an open ticket: <#${activeTickets.get(user.id)}>` };
 
   const categoryName = { general: 'General Support', bug: 'Bug Report', alumni: 'Alumni Verification' };
   const ticketNumber = Date.now().toString(36).slice(-4).toUpperCase();
@@ -940,14 +1108,8 @@ async function createTicketChannel(guild, user, category) {
 
     await ticketChannel.send({
       content: `${user} | ${modRole ? `<@&${modRole.id}>` : 'Staff'}`,
-      embeds: [new EmbedBuilder()
-        .setColor('#3498DB')
-        .setTitle(`${categoryName[category]} Ticket`)
-        .setDescription(`Hello ${user}!\n\n**Ticket ID:** \`${ticketNumber}\`\n\nPlease describe your issue.`)
-      ],
-      components: [new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('close_ticket').setLabel('🔒 Close Ticket').setStyle(ButtonStyle.Danger)
-      )]
+      embeds: [new EmbedBuilder().setColor('#3498DB').setTitle(`${categoryName[category]} Ticket`).setDescription(`Hello ${user}!\n\n**Ticket ID:** \`${ticketNumber}\`\n\nPlease describe your issue.`)],
+      components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('close_ticket').setLabel('🔒 Close Ticket').setStyle(ButtonStyle.Danger))]
     });
 
     return { channel: ticketChannel };
@@ -957,13 +1119,10 @@ async function createTicketChannel(guild, user, category) {
   }
 }
 
-async function closeTicket(channel, closedBy) {
+async function closeTicket(channel) {
   try {
     for (const [userId, channelId] of activeTickets.entries()) {
-      if (channelId === channel.id) {
-        activeTickets.delete(userId);
-        break;
-      }
+      if (channelId === channel.id) { activeTickets.delete(userId); break; }
     }
     await channel.delete('Ticket closed');
   } catch (error) {
@@ -972,30 +1131,17 @@ async function closeTicket(channel, closedBy) {
 }
 
 // ============================================
-// ONBOARDING MESSAGES
+// ONBOARDING
 // ============================================
 function createWelcomeDM() {
   return {
     embeds: [new EmbedBuilder()
       .setColor('#2ECC71')
       .setTitle('🦊 Hey there! Welcome to Lumist.ai!')
-      .setDescription(`
-I'm **Lumi**, your friendly fox guide! 🌸
-
-Before you can access the server, I need to ask you a couple quick questions. This only takes **30 seconds**!
-
-**What I'll ask:**
-1️⃣ Where are you from?
-2️⃣ What grade are you in?
-3️⃣ Accept the community rules
-
-Ready? Click the button below! 👇
-      `)
+      .setDescription("I'm **Lumi**, your friendly fox guide! 🌸\n\nBefore you can access the server, I need to ask you a couple quick questions. This only takes **30 seconds**!\n\n**What I'll ask:**\n1️⃣ Where are you from?\n2️⃣ What grade are you in?\n3️⃣ Accept the community rules\n\nReady? Click the button below! 👇")
       .setThumbnail('https://i.imgur.com/AfFp7pu.png')
     ],
-    components: [new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('start_onboarding').setLabel('🚀 Let\'s Go!').setStyle(ButtonStyle.Primary)
-    )]
+    components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('start_onboarding').setLabel("🚀 Let's Go!").setStyle(ButtonStyle.Primary))]
   };
 }
 
@@ -1003,20 +1149,17 @@ function createNationalitySelect() {
   return {
     embeds: [new EmbedBuilder().setColor('#3498DB').setTitle('🌍 Step 1 of 2: Where are you from?')],
     components: [new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('select_nationality')
-        .setPlaceholder('Select your country/region')
-        .addOptions([
-          { label: 'Vietnam', value: 'vietnam', emoji: '🇻🇳' },
-          { label: 'United States', value: 'usa', emoji: '🇺🇸' },
-          { label: 'United Kingdom', value: 'uk', emoji: '🇬🇧' },
-          { label: 'Singapore', value: 'singapore', emoji: '🇸🇬' },
-          { label: 'South Korea', value: 'korea', emoji: '🇰🇷' },
-          { label: 'Japan', value: 'japan', emoji: '🇯🇵' },
-          { label: 'China', value: 'china', emoji: '🇨🇳' },
-          { label: 'India', value: 'india', emoji: '🇮🇳' },
-          { label: 'Other', value: 'other', emoji: '🌏' },
-        ])
+      new StringSelectMenuBuilder().setCustomId('select_nationality').setPlaceholder('Select your country/region').addOptions([
+        { label: 'Vietnam', value: 'vietnam', emoji: '🇻🇳' },
+        { label: 'United States', value: 'usa', emoji: '🇺🇸' },
+        { label: 'United Kingdom', value: 'uk', emoji: '🇬🇧' },
+        { label: 'Singapore', value: 'singapore', emoji: '🇸🇬' },
+        { label: 'South Korea', value: 'korea', emoji: '🇰🇷' },
+        { label: 'Japan', value: 'japan', emoji: '🇯🇵' },
+        { label: 'China', value: 'china', emoji: '🇨🇳' },
+        { label: 'India', value: 'india', emoji: '🇮🇳' },
+        { label: 'Other', value: 'other', emoji: '🌏' },
+      ])
     )]
   };
 }
@@ -1025,103 +1168,67 @@ function createGradeSelect() {
   return {
     embeds: [new EmbedBuilder().setColor('#3498DB').setTitle('🎒 Step 2 of 2: What grade are you in?')],
     components: [new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('select_grade')
-        .setPlaceholder('Select your grade level')
-        .addOptions([
-          { label: 'Freshman (Grade 9)', value: 'freshman', emoji: '📗' },
-          { label: 'Sophomore (Grade 10)', value: 'sophomore', emoji: '📘' },
-          { label: 'Junior (Grade 11)', value: 'junior', emoji: '📙' },
-          { label: 'Senior (Grade 12)', value: 'senior', emoji: '📕' },
-          { label: 'Gap Year / Other', value: 'gap_year', emoji: '📓' },
-        ])
+      new StringSelectMenuBuilder().setCustomId('select_grade').setPlaceholder('Select your grade level').addOptions([
+        { label: 'Freshman (Grade 9)', value: 'freshman', emoji: '📗' },
+        { label: 'Sophomore (Grade 10)', value: 'sophomore', emoji: '📘' },
+        { label: 'Junior (Grade 11)', value: 'junior', emoji: '📙' },
+        { label: 'Senior (Grade 12)', value: 'senior', emoji: '📕' },
+        { label: 'Gap Year / Other', value: 'gap_year', emoji: '📓' },
+      ])
     )]
   };
 }
 
 function createRulesAcceptance() {
   return {
-    embeds: [new EmbedBuilder()
-      .setColor('#E74C3C')
-      .setTitle('📜 Almost done! Accept the rules')
-      .setDescription(`
-**1. Be Respectful** - No harassment
-**2. No Spam** - Keep it clean
-**3. Stay On Topic** - Use right channels
-**4. No Cheating** - Earn your score honestly
-**5. Protect Privacy** - Keep info safe
-**6. No NSFW** - Educational server
-**7. Follow Discord ToS**
-**8. Listen to Staff**
-      `)
-    ],
-    components: [new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('accept_rules').setLabel('✅ I Accept').setStyle(ButtonStyle.Success)
-    )]
+    embeds: [new EmbedBuilder().setColor('#E74C3C').setTitle('📜 Almost done! Accept the rules').setDescription('**1. Be Respectful** - No harassment\n**2. No Spam** - Keep it clean\n**3. Stay On Topic** - Use right channels\n**4. No Cheating** - Earn your score honestly\n**5. Protect Privacy** - Keep info safe\n**6. No NSFW** - Educational server\n**7. Follow Discord ToS**\n**8. Listen to Staff**')],
+    components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('accept_rules').setLabel('✅ I Accept').setStyle(ButtonStyle.Success))]
   };
 }
 
 function createCompletionMessage() {
   return {
-    embeds: [new EmbedBuilder()
-      .setColor('#2ECC71')
-      .setTitle('🎉 You\'re all set!')
-      .setDescription(`Welcome to **Lumist.ai**!\n\n📝 Introduce yourself in **#introductions**\n🔗 Link your account in **#verify**\n💬 Say hi in **#general**\n\n🦊 **Tip:** You can DM me anytime or mention me in channels if you have questions about Lumist!`)
-    ],
+    embeds: [new EmbedBuilder().setColor('#2ECC71').setTitle("🎉 You're all set!").setDescription('Welcome to **Lumist.ai**!\n\n📝 Introduce yourself in **#introductions**\n🔗 Link your account in **#verify**\n💬 Say hi in **#general**\n\n🦊 **Tip:** You can DM me anytime or mention me in channels if you have questions about Lumist!')],
     components: []
   };
 }
 
 // ============================================
-// EVENT: BOT READY
+// EVENTS
 // ============================================
 client.once(Events.ClientReady, async () => {
   console.log('═══════════════════════════════════════════════════════');
-  console.log(`🦊 Lumi Bot v4.1 is online!`);
+  console.log(`🦊 Lumi Bot v4.2 is online!`);
   console.log(`   Logged in as: ${client.user.tag}`);
   console.log(`   Serving guild: ${GUILD_ID}`);
   console.log(`   Analytics: ${SUPABASE_SERVICE_KEY ? 'ENABLED' : 'DISABLED'}`);
   console.log(`   Chatbot: ${N8N_WEBHOOK_URL ? 'ENABLED' : 'DISABLED'}`);
+  console.log(`   Escalation: ENABLED`);
   console.log(`   Started at: ${new Date().toISOString()}`);
   console.log('═══════════════════════════════════════════════════════');
   
   await registerCommands();
   
-  // Start analytics collection
   if (SUPABASE_SERVICE_KEY) {
     console.log(`📊 Starting analytics collection (every ${ANALYTICS_INTERVAL / 1000}s)...`);
     setTimeout(() => collectServerStats(), 5000);
     setInterval(collectServerStats, ANALYTICS_INTERVAL);
   }
   
-  console.log('');
-  console.log('📋 Active features:');
-  console.log('   • Onboarding system');
-  console.log('   • Auto-moderation');
-  console.log('   • Slash commands');
-  console.log('   • Ticket system');
-  console.log('   • Analytics pipeline');
+  console.log('\n📋 Active features:\n   • Onboarding system\n   • Auto-moderation\n   • Slash commands\n   • Ticket system\n   • Analytics pipeline');
   if (N8N_WEBHOOK_URL) console.log('   • AI Chatbot (n8n)');
-  console.log('');
+  console.log('   • Escalation system\n');
 });
 
-// ============================================
-// EVENT: NEW MEMBER JOINS
-// ============================================
 client.on(Events.GuildMemberAdd, async (member) => {
   console.log(`👋 New member joined: ${member.user.tag}`);
-  
   await logMemberEvent('join', member);
   
   joinHistory.push(Date.now());
   const now = Date.now();
-  while (joinHistory.length > 0 && now - joinHistory[0] > AUTOMOD_CONFIG.raid.timeWindow) {
-    joinHistory.shift();
-  }
+  while (joinHistory.length > 0 && now - joinHistory[0] > AUTOMOD_CONFIG.raid.timeWindow) joinHistory.shift();
   
-  if (checkForRaid()) {
-    await enableRaidMode(member.guild);
-  }
+  if (checkForRaid()) await enableRaidMode(member.guild);
   
   if (isRaidMode) {
     await member.send('⚠️ Server is in lockdown mode. Try again later.').catch(() => {});
@@ -1140,52 +1247,41 @@ client.on(Events.GuildMemberAdd, async (member) => {
     if (welcomeChannel) {
       await welcomeChannel.send({
         embeds: [new EmbedBuilder().setColor('#FFA500').setDescription(`Hey ${member}! Enable DMs and click below to start.`)],
-        components: [new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('start_onboarding').setLabel('🚀 Start').setStyle(ButtonStyle.Primary)
-        )]
+        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('start_onboarding').setLabel('🚀 Start').setStyle(ButtonStyle.Primary))]
       });
     }
   }
 });
 
-// ============================================
-// EVENT: MEMBER LEAVES
-// ============================================
 client.on(Events.GuildMemberRemove, async (member) => {
   console.log(`👋 Member left: ${member.user.tag}`);
-  
   const hadMemberRole = member.roles.cache.some(r => r.name === ROLES.MEMBER);
-  
-  await logMemberEvent('leave', member, {
-    had_member_role: hadMemberRole,
-    roles: member.roles.cache.map(r => r.name),
-  });
+  await logMemberEvent('leave', member, { had_member_role: hadMemberRole, roles: member.roles.cache.map(r => r.name) });
 });
 
-// ============================================
-// EVENT: MESSAGE CREATE (Auto-Mod + Analytics + Chatbot)
-// ============================================
 client.on(Events.MessageCreate, async (message) => {
-  // Ignore bot messages
   if (message.author.bot) return;
   
-  // Track for analytics (only guild messages)
-  if (message.guild) {
-    trackMessage(message);
+  // Check escalation thread
+  if (message.channel.isThread && message.channel.isThread() && escalationThreads.has(message.channel.id)) {
+    if (!message.content.startsWith('/')) {
+      const escalationId = escalationThreads.get(message.channel.id);
+      await forwardAgentMessage(message, escalationId);
+    }
+    return;
   }
   
-  // Check if should trigger chatbot
+  if (message.guild) trackMessage(message);
+  
   if (shouldTriggerChatbot(message)) {
     await handleChatbotMessage(message);
-    return; // Skip auto-mod for chatbot messages
+    return;
   }
   
-  // Auto-mod only applies to guild messages
   if (!message.guild) return;
   if (isStaff(message.member)) return;
   
-  let violation = null;
-  let reason = null;
+  let violation = null, reason = null;
   
   if (checkBannedWords(message)) { violation = 'banned_words'; reason = 'Prohibited language'; }
   else if (checkLinks(message)) { violation = 'unapproved_link'; reason = 'Unapproved links'; }
@@ -1206,101 +1302,63 @@ client.on(Events.MessageCreate, async (message) => {
   }
 });
 
-// ============================================
-// EVENT: ROLE UPDATES (Track verification/premium)
-// ============================================
 client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
   const oldRoles = oldMember.roles.cache;
   const newRoles = newMember.roles.cache;
   
-  const verifiedRole = newRoles.find(r => r.name === ROLES.VERIFIED);
-  const hadVerified = oldRoles.some(r => r.name === ROLES.VERIFIED);
-  if (verifiedRole && !hadVerified) {
+  if (newRoles.find(r => r.name === ROLES.VERIFIED) && !oldRoles.some(r => r.name === ROLES.VERIFIED)) {
     await logMemberEvent('verified', newMember);
     console.log(`✅ ${newMember.user.tag} is now verified`);
   }
   
-  const premiumRole = newRoles.find(r => r.name === ROLES.PREMIUM);
-  const hadPremium = oldRoles.some(r => r.name === ROLES.PREMIUM);
-  if (premiumRole && !hadPremium) {
+  if (newRoles.find(r => r.name === ROLES.PREMIUM) && !oldRoles.some(r => r.name === ROLES.PREMIUM)) {
     await logMemberEvent('premium_added', newMember);
     console.log(`💎 ${newMember.user.tag} is now premium`);
   }
   
-  if (!premiumRole && hadPremium) {
+  if (!newRoles.find(r => r.name === ROLES.PREMIUM) && oldRoles.some(r => r.name === ROLES.PREMIUM)) {
     await logMemberEvent('premium_removed', newMember);
     console.log(`📉 ${newMember.user.tag} lost premium`);
   }
 });
 
-// ============================================
-// EVENT: INTERACTIONS
-// ============================================
 client.on(Events.InteractionCreate, async (interaction) => {
-  // ---- SLASH COMMANDS ----
   if (interaction.isChatInputCommand()) {
     const { commandName, options } = interaction;
     
-    // /ask command for chatbot
     if (commandName === 'ask') {
-      if (!N8N_WEBHOOK_URL) {
-        return interaction.reply({ content: '🦊 Sorry, the chatbot is not configured yet!', ephemeral: true });
-      }
-      
+      if (!N8N_WEBHOOK_URL) return interaction.reply({ content: '🦊 Sorry, the chatbot is not configured!', ephemeral: true });
       const question = options.getString('question');
       await interaction.deferReply();
-      
-      // Create a fake message object for the chatbot handler
-      const fakeMessage = {
-        content: question,
-        author: interaction.user,
-        member: interaction.member,
-        channel: interaction.channel,
-      };
-      
+      const fakeMessage = { content: question, author: interaction.user, member: interaction.member, channel: interaction.channel };
       const result = await sendToN8nChatbot(fakeMessage, false);
-      
-      if (!result.success) {
-        await interaction.editReply('🦊 Oops! I had a little hiccup. Try again in a moment!');
-        return;
-      }
-      
-      const responseText = result.response || "I'm not sure how to answer that!";
-      const chunks = splitMessage(responseText, 1900);
-      
+      if (!result.success) { await interaction.editReply('🦊 Oops! Try again in a moment!'); return; }
+      const chunks = splitMessage(result.response || "I'm not sure!", 1900);
       await interaction.editReply(chunks[0]);
-      for (let i = 1; i < chunks.length; i++) {
-        await interaction.followUp(chunks[i]);
-      }
-      
-      console.log(`💬 /ask command used by ${interaction.user.tag}`);
+      for (let i = 1; i < chunks.length; i++) await interaction.followUp(chunks[i]);
+      console.log(`💬 /ask used by ${interaction.user.tag}`);
       return;
     }
     
     if (commandName === 'warn') {
-      const user = options.getUser('user');
-      const reason = options.getString('reason');
+      const user = options.getUser('user'), reason = options.getString('reason');
       const member = await interaction.guild.members.fetch(user.id).catch(() => null);
       if (!member) return interaction.reply({ content: '❌ User not found.', ephemeral: true });
-      const warningCount = addWarning(user.id, reason, interaction.user.tag);
-      await logModAction(interaction.guild, 'Warning Issued', user, interaction.user, `${reason} (Warning #${warningCount})`, '#FFA500');
-      await member.send(`⚠️ **Warning**\nReason: ${reason}\nThis is warning #${warningCount}.`).catch(() => {});
-      await interaction.reply({ content: `✅ Warned **${user.tag}** (Warning #${warningCount})`, ephemeral: true });
+      const count = addWarning(user.id, reason, interaction.user.tag);
+      await logModAction(interaction.guild, 'Warning Issued', user, interaction.user, `${reason} (Warning #${count})`, '#FFA500');
+      await member.send(`⚠️ **Warning**\nReason: ${reason}\nThis is warning #${count}.`).catch(() => {});
+      await interaction.reply({ content: `✅ Warned **${user.tag}** (#${count})`, ephemeral: true });
     }
     
     if (commandName === 'mute') {
-      const user = options.getUser('user');
-      const duration = options.getInteger('duration');
-      const reason = options.getString('reason') || 'No reason';
+      const user = options.getUser('user'), duration = options.getInteger('duration'), reason = options.getString('reason') || 'No reason';
       const member = await interaction.guild.members.fetch(user.id).catch(() => null);
       if (!member) return interaction.reply({ content: '❌ User not found.', ephemeral: true });
       try {
         await member.timeout(duration * 60 * 1000, reason);
         await logModAction(interaction.guild, `Muted (${duration} min)`, user, interaction.user, reason, '#E67E22');
-        await interaction.reply({ content: `✅ Muted **${user.tag}** for ${duration} minutes.`, ephemeral: true });
-      } catch (e) {
-        await interaction.reply({ content: `❌ Failed: ${e.message}`, ephemeral: true });
-      }
+        await interaction.reply({ content: `✅ Muted **${user.tag}** for ${duration} min.`, ephemeral: true });
+      } catch (e) { await interaction.reply({ content: `❌ Failed: ${e.message}`, ephemeral: true }); }
     }
     
     if (commandName === 'unmute') {
@@ -1311,36 +1369,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await member.timeout(null);
         await logModAction(interaction.guild, 'Unmuted', user, interaction.user, 'Manual', '#2ECC71');
         await interaction.reply({ content: `✅ Unmuted **${user.tag}**.`, ephemeral: true });
-      } catch (e) {
-        await interaction.reply({ content: `❌ Failed: ${e.message}`, ephemeral: true });
-      }
+      } catch (e) { await interaction.reply({ content: `❌ Failed: ${e.message}`, ephemeral: true }); }
     }
     
     if (commandName === 'kick') {
-      const user = options.getUser('user');
-      const reason = options.getString('reason') || 'No reason';
+      const user = options.getUser('user'), reason = options.getString('reason') || 'No reason';
       const member = await interaction.guild.members.fetch(user.id).catch(() => null);
       if (!member) return interaction.reply({ content: '❌ User not found.', ephemeral: true });
       try {
         await member.kick(reason);
         await logModAction(interaction.guild, 'Kicked', user, interaction.user, reason, '#E74C3C');
         await interaction.reply({ content: `✅ Kicked **${user.tag}**.`, ephemeral: true });
-      } catch (e) {
-        await interaction.reply({ content: `❌ Failed: ${e.message}`, ephemeral: true });
-      }
+      } catch (e) { await interaction.reply({ content: `❌ Failed: ${e.message}`, ephemeral: true }); }
     }
     
     if (commandName === 'ban') {
-      const user = options.getUser('user');
-      const reason = options.getString('reason') || 'No reason';
-      const days = options.getInteger('days') || 0;
+      const user = options.getUser('user'), reason = options.getString('reason') || 'No reason', days = options.getInteger('days') || 0;
       try {
         await interaction.guild.members.ban(user.id, { deleteMessageSeconds: days * 86400, reason });
         await logModAction(interaction.guild, 'Banned', user, interaction.user, reason, '#992D22');
         await interaction.reply({ content: `✅ Banned **${user.tag}**.`, ephemeral: true });
-      } catch (e) {
-        await interaction.reply({ content: `❌ Failed: ${e.message}`, ephemeral: true });
-      }
+      } catch (e) { await interaction.reply({ content: `❌ Failed: ${e.message}`, ephemeral: true }); }
     }
     
     if (commandName === 'warnings') {
@@ -1359,28 +1408,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     
     if (commandName === 'purge') {
-      const amount = options.getInteger('amount');
-      const targetUser = options.getUser('user');
+      const amount = options.getInteger('amount'), targetUser = options.getUser('user');
       try {
         let messages = await interaction.channel.messages.fetch({ limit: amount + 1 });
         if (targetUser) messages = messages.filter(m => m.author.id === targetUser.id);
         const deleted = await interaction.channel.bulkDelete(messages.first(amount), true);
         await interaction.reply({ content: `✅ Deleted ${deleted.size} messages.`, ephemeral: true });
-      } catch (e) {
-        await interaction.reply({ content: `❌ Failed: ${e.message}`, ephemeral: true });
-      }
+      } catch (e) { await interaction.reply({ content: `❌ Failed: ${e.message}`, ephemeral: true }); }
     }
     
-    if (commandName === 'ticket') {
-      await interaction.reply(createTicketCategorySelect());
-    }
+    if (commandName === 'ticket') await interaction.reply(createTicketCategorySelect());
     
     if (commandName === 'close') {
-      if (!interaction.channel.name.startsWith('ticket-')) {
-        return interaction.reply({ content: '❌ Use in ticket channels only.', ephemeral: true });
-      }
+      if (!interaction.channel.name.startsWith('ticket-')) return interaction.reply({ content: '❌ Use in ticket channels only.', ephemeral: true });
       await interaction.reply({ content: '🔒 Closing...', ephemeral: true });
-      await closeTicket(interaction.channel, interaction.user);
+      await closeTicket(interaction.channel);
     }
     
     if (commandName === 'setuptickets') {
@@ -1392,39 +1434,55 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const guild = interaction.guild;
       const members = await guild.members.fetch();
       const roles = await guild.roles.fetch();
-      
       const memberRole = roles.find(r => r.name === ROLES.MEMBER);
       const verifiedRole = roles.find(r => r.name === ROLES.VERIFIED);
       const premiumRole = roles.find(r => r.name === ROLES.PREMIUM);
-      
       const total = members.filter(m => !m.user.bot).size;
       const online = members.filter(m => !m.user.bot && m.presence?.status !== 'offline').size;
       const onboarded = memberRole ? members.filter(m => m.roles.cache.has(memberRole.id)).size : 0;
       const verified = verifiedRole ? members.filter(m => m.roles.cache.has(verifiedRole.id)).size : 0;
       const premium = premiumRole ? members.filter(m => m.roles.cache.has(premiumRole.id)).size : 0;
       
-      const embed = new EmbedBuilder()
-        .setColor('#3498DB')
-        .setTitle('📊 Server Statistics')
-        .addFields(
-          { name: 'Total Members', value: `${total}`, inline: true },
-          { name: 'Online', value: `${online}`, inline: true },
-          { name: 'Onboarded', value: `${onboarded}`, inline: true },
-          { name: 'Verified', value: `${verified}`, inline: true },
-          { name: 'Premium', value: `${premium}`, inline: true },
-        )
-        .setTimestamp();
-      
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await interaction.reply({ embeds: [new EmbedBuilder().setColor('#3498DB').setTitle('📊 Server Statistics').addFields(
+        { name: 'Total', value: `${total}`, inline: true },
+        { name: 'Online', value: `${online}`, inline: true },
+        { name: 'Onboarded', value: `${onboarded}`, inline: true },
+        { name: 'Verified', value: `${verified}`, inline: true },
+        { name: 'Premium', value: `${premium}`, inline: true },
+      ).setTimestamp()], ephemeral: true });
     }
   }
   
-  // ---- BUTTONS ----
   if (interaction.isButton()) {
-    if (interaction.customId === 'start_onboarding') {
-      if (!onboardingState.has(interaction.user.id)) {
-        onboardingState.set(interaction.user.id, { nationality: null, grade: null, guildId: GUILD_ID });
+    // Escalation buttons
+    if (interaction.customId.startsWith('claim_escalation_')) {
+      await handleClaimEscalation(interaction, interaction.customId.replace('claim_escalation_', ''));
+      return;
+    }
+    if (interaction.customId.startsWith('resolve_escalation_')) {
+      await handleResolveEscalation(interaction, interaction.customId.replace('resolve_escalation_', ''));
+      return;
+    }
+    if (interaction.customId.startsWith('return_to_ai_')) {
+      await handleReturnToAI(interaction, interaction.customId.replace('return_to_ai_', ''));
+      return;
+    }
+    if (interaction.customId.startsWith('view_history_')) {
+      await handleViewHistory(interaction, interaction.customId.replace('view_history_', ''));
+      return;
+    }
+    if (interaction.customId.startsWith('open_thread_')) {
+      const escalationId = interaction.customId.replace('open_thread_', '');
+      for (const [threadId, escId] of escalationThreads.entries()) {
+        if (escId === escalationId) { await interaction.reply({ content: `Thread: <#${threadId}>`, ephemeral: true }); return; }
       }
+      await interaction.reply({ content: 'Thread not found. Try claiming again.', ephemeral: true });
+      return;
+    }
+    
+    // Onboarding buttons
+    if (interaction.customId === 'start_onboarding') {
+      if (!onboardingState.has(interaction.user.id)) onboardingState.set(interaction.user.id, { nationality: null, grade: null, guildId: GUILD_ID });
       await interaction.update(createNationalitySelect());
     }
     
@@ -1436,9 +1494,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const guild = await client.guilds.fetch(state.guildId || GUILD_ID);
         const member = await guild.members.fetch(interaction.user.id);
         
-        const rolesToAssign = [ROLES.MEMBER, getNationalityRole(state.nationality), getGradeRole(state.grade)];
-        
-        for (const roleName of rolesToAssign) {
+        for (const roleName of [ROLES.MEMBER, getNationalityRole(state.nationality), getGradeRole(state.grade)]) {
           if (roleName) {
             const role = await findRole(guild, roleName);
             if (role) await member.roles.add(role);
@@ -1446,18 +1502,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         
         await interaction.update(createCompletionMessage());
-        
-        await logMemberEvent('onboarding_complete', member, {
-          nationality: state.nationality,
-          grade: state.grade,
-        });
+        await logMemberEvent('onboarding_complete', member, { nationality: state.nationality, grade: state.grade });
         
         const introChannel = await findChannel(guild, CHANNELS.INTRODUCTIONS);
-        if (introChannel) {
-          await introChannel.send({
-            embeds: [new EmbedBuilder().setColor('#2ECC71').setDescription(`🎉 Welcome ${member} to **Lumist.ai**!`).setTimestamp()]
-          });
-        }
+        if (introChannel) await introChannel.send({ embeds: [new EmbedBuilder().setColor('#2ECC71').setDescription(`🎉 Welcome ${member} to **Lumist.ai**!`).setTimestamp()] });
         
         onboardingState.delete(interaction.user.id);
         console.log(`🎉 ${interaction.user.tag} completed onboarding!`);
@@ -1467,17 +1515,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
     }
     
-    if (interaction.customId === 'create_ticket') {
-      await interaction.reply(createTicketCategorySelect());
-    }
-    
-    if (interaction.customId === 'close_ticket') {
-      await interaction.reply({ content: '🔒 Closing...', ephemeral: true });
-      await closeTicket(interaction.channel, interaction.user);
-    }
+    if (interaction.customId === 'create_ticket') await interaction.reply(createTicketCategorySelect());
+    if (interaction.customId === 'close_ticket') { await interaction.reply({ content: '🔒 Closing...', ephemeral: true }); await closeTicket(interaction.channel); }
   }
   
-  // ---- SELECT MENUS ----
   if (interaction.isStringSelectMenu()) {
     const state = onboardingState.get(interaction.user.id) || { nationality: null, grade: null, guildId: GUILD_ID };
     
@@ -1495,24 +1536,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     
     if (interaction.customId === 'ticket_category') {
       const result = await createTicketChannel(interaction.guild, interaction.user, interaction.values[0]);
-      if (result.error) {
-        await interaction.update({ content: `❌ ${result.error}`, embeds: [], components: [] });
-      } else {
-        await interaction.update({ content: `✅ Ticket created! <#${result.channel.id}>`, embeds: [], components: [] });
-      }
+      if (result.error) await interaction.update({ content: `❌ ${result.error}`, embeds: [], components: [] });
+      else await interaction.update({ content: `✅ Ticket created! <#${result.channel.id}>`, embeds: [], components: [] });
     }
   }
 });
 
 // ============================================
-// ERROR HANDLING
+// ERROR HANDLING & LOGIN
 // ============================================
 client.on('error', (error) => console.error('❌ Client error:', error));
 process.on('unhandledRejection', (error) => console.error('❌ Unhandled rejection:', error));
 process.on('SIGTERM', () => { client.destroy(); server.close(); process.exit(0); });
 
-// ============================================
-// LOGIN
-// ============================================
 console.log('🔄 Connecting to Discord...');
 client.login(BOT_TOKEN);
