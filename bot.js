@@ -446,9 +446,23 @@ async function handleClaimEscalation(interaction, escalationId) {
     const existingEmbed = message.embeds[0];
     const platform = existingEmbed.fields?.find(f => f.name === 'Platform')?.value || 'Unknown';
     const userName = existingEmbed.fields?.find(f => f.name === 'User')?.value || 'Unknown';
-
     const thread = await createEscalationThread(escalationId, message, userName, platform);
-
+    // Save thread ID to database
+    if (thread) {
+      try {
+        await fetch(`${N8N_ESCALATION_URL}/escalation-update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            escalation_id: escalationId,
+            action: 'save_thread',
+            discord_thread_id: thread.id
+          })
+        });
+      } catch (e) {
+        console.error('Failed to save thread ID:', e.message);
+      }
+    }
     const newEmbed = EmbedBuilder.from(existingEmbed);
     newEmbed.setTitle('🎫 Escalation [CLAIMED]').setColor('#3498DB');
     newEmbed.addFields(
