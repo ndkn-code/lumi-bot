@@ -198,6 +198,33 @@ async function main() {
       process.exit(1);
     }
 
+    // Step 5b: Update channel permissions for @everyone
+    console.log('\nStep 5b: Updating channel permissions for @everyone...');
+    const channelsToUpdate = ['welcome', 'general', 'introductions', 'sat-math', 'sat-reading', 'college-apps'];
+
+    for (const channelName of channelsToUpdate) {
+      if (channelMap.has(channelName)) {
+        const channel = channelMap.get(channelName);
+        try {
+          // Set @everyone (role ID = guild ID) to have VIEW_CHANNEL and SEND_MESSAGES
+          await rest.put(
+            Routes.channelPermission(channel.id, GUILD_ID),
+            {
+              body: {
+                id: GUILD_ID,
+                type: 0, // Role type
+                allow: (1n << 10n | 1n << 11n).toString(), // VIEW_CHANNEL (1<<10) + SEND_MESSAGES (1<<11)
+                deny: '0',
+              },
+            }
+          );
+          console.log(`   [UPDATED] #${channelName} - @everyone can view & send`);
+        } catch (error) {
+          console.warn(`   [SKIP] #${channelName} - ${error.message}`);
+        }
+      }
+    }
+
     // Step 6: Get interest channel IDs
     console.log('\nStep 6: Getting interest channel IDs...');
     const interestChannelIds = {};
