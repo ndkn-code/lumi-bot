@@ -78,15 +78,23 @@ const GRADE_ROLES = [
   { name: '🎒 Gap Year', emoji: '📓', label: 'Gap Year / College' },
 ];
 
-// Required channels for onboarding
+// Required channels for onboarding (need at least 7 default channels)
+// The script will try these in order and use whichever exist
 const REQUIRED_CHANNELS = [
   'welcome',
   'rules',
-  'general-chat',
+  'general',        // or 'general-chat'
   'introductions',
   'sat-math',
   'sat-reading',
+];
+
+// Optional channels (will be added if they exist)
+const OPTIONAL_CHANNELS = [
   'ask-lumi',
+  'general-chat',   // fallback if 'general' doesn't exist
+  'college-apps',
+  'announcements',
 ];
 
 // Optional interest channels
@@ -195,9 +203,21 @@ async function main() {
       }
     }
 
+    // Add optional channels if they exist (to reach 7 minimum)
+    console.log('\n   Checking optional channels...');
+    for (const channelName of OPTIONAL_CHANNELS) {
+      if (channelMap.has(channelName)) {
+        const channel = channelMap.get(channelName);
+        if (!defaultChannelIds.includes(channel.id)) {
+          defaultChannelIds.push(channel.id);
+          console.log(`   [ADDED] #${channelName} (${channel.id})`);
+        }
+      }
+    }
+
     if (defaultChannelIds.length < 7) {
-      console.error('\nError: Need at least 7 default channels for onboarding');
-      console.error('Please create the missing channels and run this script again.');
+      console.error(`\nError: Need at least 7 default channels for onboarding (found ${defaultChannelIds.length})`);
+      console.error('Please create more channels and run this script again.');
       process.exit(1);
     }
 

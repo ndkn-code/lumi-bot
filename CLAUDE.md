@@ -290,6 +290,59 @@ When making changes, always provide:
 - **Hosting**: Render (auto-deploys from GitHub main branch)
 - **Database**: Supabase (`social_analytics` schema)
 - **AI/Escalation**: n8n workflows
+- **Process Manager**: PM2 (on local/VPS deployments)
+
+### Server Operations
+
+The bot can be managed using PM2. Common commands:
+
+```bash
+pm2 status lumi-bot      # Check bot status
+pm2 logs lumi-bot        # View logs
+pm2 restart lumi-bot     # Restart the bot
+pm2 stop lumi-bot        # Stop the bot
+pm2 start bot.js --name lumi-bot  # Start the bot
+```
+
+### Update Script (~/lumi-bot/update.sh)
+
+Use this script to pull latest changes and restart the bot:
+
+```bash
+#!/bin/bash
+# Lumi Bot - Auto Update Script
+
+echo "🔄 Starting update process..."
+echo "📅 $(date)"
+
+# Navigate to bot directory
+cd ~/lumi-bot || { echo "❌ Bot directory not found!"; exit 1; }
+
+# Pull latest changes
+echo "📥 Pulling from GitHub..."
+git pull origin main
+
+if [ $? -ne 0 ]; then
+    echo "❌ Git pull failed!"
+    exit 1
+fi
+
+# Install any new dependencies
+echo "📦 Installing dependencies..."
+npm install
+
+# Restart the bot
+echo "🔄 Restarting bot..."
+pm2 restart lumi-bot
+
+sleep 3
+
+echo "✅ Update complete!"
+pm2 status lumi-bot
+pm2 logs lumi-bot --lines 10 --nostream
+```
+
+Run with: `bash ~/lumi-bot/update.sh`
 
 ### Health Check
 
