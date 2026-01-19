@@ -24,6 +24,14 @@ if (!BOT_TOKEN) {
 
 const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
 
+// Helper to generate snowflake-like IDs for onboarding prompts/options
+let idCounter = 0;
+function generateSnowflake() {
+  const timestamp = BigInt(Date.now() - 1420070400000) << 22n; // Discord epoch
+  const increment = BigInt(idCounter++);
+  return (timestamp | increment).toString();
+}
+
 // Country roles to create (expanded list ~40 countries)
 const COUNTRY_ROLES = [
   { name: '🇺🇸 United States', emoji: '🇺🇸' },
@@ -239,6 +247,7 @@ async function main() {
 
     // Prompt 1: Country selection
     const countryOptions = COUNTRY_ROLES.map(country => ({
+      id: generateSnowflake(),
       title: country.name.replace(/^.{1,2}\s/, ''), // Remove emoji prefix for cleaner display
       emoji: { name: country.emoji },
       role_ids: [countryRoleIds[country.name]],
@@ -247,6 +256,7 @@ async function main() {
 
     // Prompt 2: Grade selection (also assigns Member role)
     const gradeOptions = GRADE_ROLES.map(grade => ({
+      id: generateSnowflake(),
       title: grade.label,
       emoji: { name: grade.emoji },
       role_ids: [gradeRoleIds[grade.name], memberRoleId].filter(Boolean),
@@ -257,6 +267,7 @@ async function main() {
     const interestOptions = [];
     if (interestChannelIds['sat-math']) {
       interestOptions.push({
+        id: generateSnowflake(),
         title: 'SAT Math',
         emoji: { name: '📐' },
         role_ids: [],
@@ -265,6 +276,7 @@ async function main() {
     }
     if (interestChannelIds['sat-reading']) {
       interestOptions.push({
+        id: generateSnowflake(),
         title: 'SAT Reading & Writing',
         emoji: { name: '📖' },
         role_ids: [],
@@ -273,6 +285,7 @@ async function main() {
     }
     if (interestChannelIds['college-apps']) {
       interestOptions.push({
+        id: generateSnowflake(),
         title: 'College Applications',
         emoji: { name: '🎓' },
         role_ids: [],
@@ -283,6 +296,7 @@ async function main() {
     // Build prompts array
     const prompts = [
       {
+        id: generateSnowflake(),
         type: 0, // MULTIPLE_CHOICE
         title: 'Where are you from?',
         single_select: true,
@@ -291,6 +305,7 @@ async function main() {
         options: countryOptions,
       },
       {
+        id: generateSnowflake(),
         type: 0, // MULTIPLE_CHOICE
         title: 'What grade are you in?',
         single_select: true,
@@ -303,6 +318,7 @@ async function main() {
     // Only add interests prompt if we have options
     if (interestOptions.length > 0) {
       prompts.push({
+        id: generateSnowflake(),
         type: 0, // MULTIPLE_CHOICE
         title: 'What are you interested in?',
         single_select: false,
