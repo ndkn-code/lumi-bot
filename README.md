@@ -1,12 +1,13 @@
 # Lumist.ai Discord Bot
 
-Discord bot v4.3 for the Lumist.ai community. Full-featured community management with native Discord onboarding, moderation, AI chatbot, ticketing, and analytics.
+Discord bot v4.3 for the Lumist.ai community. Full-featured community management with native Discord onboarding, moderation, AI chatbot, ticketing, verification, and analytics.
 
 ## Features
 
 ### Core
-- 🎉 **Native Discord Onboarding** - Polished onboarding UI with ~40 country options, grade selection, and interest-based channel access
-- 👋 **Introduction Post** - Automatic welcome in #introductions when onboarding completes
+- 🎉 **Native Discord Onboarding** - Polished onboarding UI with country/grade selection and interest-based channel access
+- 👋 **Smart Welcome** - Personalized welcome in #introductions with quick links when onboarding completes
+- ✅ **Verification System** - FAQ-style #verify channel with Lumist.ai account linking and Alumni verification
 
 ### Moderation
 - 🛡️ **Auto-Moderation** - Spam detection, mention spam, duplicate messages, link filtering, banned words
@@ -36,6 +37,7 @@ Discord bot v4.3 for the Lumist.ai community. Full-featured community management
 | `CHATBOT_CHANNEL_ID` | Channel ID for dedicated chatbot channel | Optional |
 | `N8N_ESCALATION_URL` | n8n webhook for escalation system | Optional |
 | `MOD_LOG_CHANNEL_ID` | Channel ID for mod logs | Optional |
+| `LUMIST_VERIFY_URL` | URL for Lumist.ai verification | Optional |
 
 ## Initial Setup
 
@@ -48,11 +50,24 @@ BOT_TOKEN=your_token node setup-onboarding.js
 ```
 
 This script:
-- Creates ~40 country roles for nationality selection
+- Creates country roles for nationality selection (9 options due to Discord limits)
 - Configures onboarding prompts (country, grade, interests)
-- Sets up default channels and Server Guide
+- Sets up default channels with proper @everyone permissions
+- Enables the Server Guide
 
 After running, verify in **Server Settings > Onboarding**.
+
+### Setup Verification Channel
+
+After the bot is running, set up the #verify channel:
+
+```
+/setupverify
+```
+
+This creates FAQ-style posts in #verify for:
+- **Lumist.ai Verification** - Link account for Verified badge
+- **Alumni Verification** - Submit proof for Alumni role
 
 ## Deployment on GCP
 
@@ -141,6 +156,7 @@ The bot exposes an HTTP server for health checks and escalation webhooks:
 | `/purge <amount> [user]` | Delete messages | Manage Messages |
 | `/stats` | Server statistics | Manage Guild |
 | `/setuptickets` | Setup ticket system | Admin |
+| `/setupverify` | Setup verification posts in #verify | Admin |
 | `/close` | Close current ticket | Manage Channels |
 
 ## License

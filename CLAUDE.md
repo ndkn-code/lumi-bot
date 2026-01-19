@@ -1,15 +1,16 @@
 # Lumist Discord Bot - Development Guide
 
-> **Version:** 4.2  
+> **Version:** 4.3
 > **Last synced:** January 2026
 
 ## Project Overview
 
 This is the Lumi Bot for the Lumist.ai Discord server. It handles:
-- Member onboarding with 2-step questionnaire (nationality + grade)
+- **Native Discord Onboarding** - Country/grade selection via Discord's built-in onboarding UI
 - Auto-moderation (spam, links, raids, banned words)
 - Slash commands for moderators
 - Ticket system for support
+- **Verification system** - Lumist.ai account linking + Alumni verification
 - Analytics pipeline to Supabase
 - AI chatbot via n8n integration
 - **Escalation system** for human takeover from AI
@@ -19,6 +20,8 @@ This is the Lumi Bot for the Lumist.ai Discord server. It handles:
 ```
 lumi-bot/
 ├── bot.js              # Main bot code (all features)
+├── setup-onboarding.js # One-time script to configure Discord native onboarding
+├── update.sh           # Server update script (pull, install, restart)
 ├── package.json        # Dependencies (discord.js v14)
 ├── .gitignore          # Git ignore file
 ├── README.md           # Basic documentation
@@ -75,6 +78,7 @@ const CHANNELS = {
   MOD_LOGS: 'mod-logs',
   SUPPORT_TICKETS: 'support-tickets',
   ASK_LUMI: 'ask-lumi',
+  VERIFY: 'verify',
 };
 ```
 
@@ -120,6 +124,7 @@ const AUTOMOD_CONFIG = {
 | `N8N_ESCALATION_URL` | n8n webhook base for escalation | For escalation |
 | `MOD_LOG_CHANNEL_ID` | Channel ID for mod logs | Optional (finds by name) |
 | `CHATBOT_CHANNEL_ID` | Dedicated chatbot channel | Optional |
+| `LUMIST_VERIFY_URL` | URL for Lumist.ai account verification | Optional (default: https://lumist.ai/discord-verify) |
 
 ---
 
@@ -198,16 +203,48 @@ The bot does NOT automatically create channels/roles. For server changes:
 
 ### Modifying Onboarding Flow
 
-Current flow is 2 steps:
-1. Nationality selection → `createNationalitySelect()`
-2. Grade selection → `createGradeSelect()`
-3. Rules acceptance → `createRulesAcceptance()`
-4. Completion → `createCompletionMessage()`
+**Onboarding now uses Discord's native Server Onboarding feature.**
 
-To add a new step:
-1. Create new select function
-2. Update the flow in interaction handlers
-3. Update `SERVER_CONFIG.md`
+The bot's old DM-based onboarding was removed in v4.3. Onboarding is configured via `setup-onboarding.js`.
+
+Current flow:
+1. User joins → Discord shows native onboarding UI
+2. Country selection (9 options + "Other")
+3. Grade selection (assigns grade role + 🌱 Member role)
+4. Interests selection (optional - gives access to SAT/college channels)
+5. User receives Member role → bot posts welcome in #introductions
+
+To modify onboarding:
+1. Edit `setup-onboarding.js` to change options
+2. Run: `BOT_TOKEN=xxx node setup-onboarding.js`
+3. Verify in Server Settings → Onboarding
+
+**Note:** Discord limits onboarding to ~10 options per prompt.
+
+---
+
+## Verification System
+
+The #verify channel uses a FAQ-style layout with two verification options:
+
+### Lumist.ai Verification
+- Users click button → receive verification link (ephemeral)
+- Link configurable via `LUMIST_VERIFY_URL` environment variable
+- Successful verification grants ✅ Verified role
+- Premium users automatically get 💎 Premium role
+
+### Alumni Verification
+- Users click button → creates a ticket channel
+- User submits proof of college enrollment (student ID, acceptance letter, .edu email)
+- Moderator reviews and grants 🎓 Alumni role
+- Ticket auto-closes after verification
+
+### Setup
+Run `/setupverify` in any channel to post the verification embeds to #verify.
+
+### Button IDs
+- `verify_lumist` - Opens Lumist.ai verification flow
+- `verify_alumni` - Creates alumni verification ticket
 
 ---
 
