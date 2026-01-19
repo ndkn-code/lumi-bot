@@ -32,23 +32,17 @@ function generateSnowflake() {
   return (timestamp | increment).toString();
 }
 
-// Country roles for onboarding (Discord limits options per prompt to ~15)
-// Additional roles exist in the server but won't appear in onboarding dropdown
+// Country roles for onboarding (Discord limits to ~10 options per prompt)
+// Additional country roles exist in server - users can request via mods
 const COUNTRY_ROLES_FOR_ONBOARDING = [
   { name: '🇺🇸 United States', emoji: '🇺🇸' },
   { name: '🇻🇳 Vietnam', emoji: '🇻🇳' },
   { name: '🇬🇧 United Kingdom', emoji: '🇬🇧' },
-  { name: '🇨🇦 Canada', emoji: '🇨🇦' },
-  { name: '🇦🇺 Australia', emoji: '🇦🇺' },
   { name: '🇮🇳 India', emoji: '🇮🇳' },
   { name: '🇨🇳 China', emoji: '🇨🇳' },
   { name: '🇯🇵 Japan', emoji: '🇯🇵' },
   { name: '🇰🇷 South Korea', emoji: '🇰🇷' },
   { name: '🇸🇬 Singapore', emoji: '🇸🇬' },
-  { name: '🇹🇭 Thailand', emoji: '🇹🇭' },
-  { name: '🇲🇾 Malaysia', emoji: '🇲🇾' },
-  { name: '🇵🇭 Philippines', emoji: '🇵🇭' },
-  { name: '🇮🇩 Indonesia', emoji: '🇮🇩' },
   { name: '🌏 Other International', emoji: '🌏', displayTitle: 'Other' },  // Catch-all
 ];
 
