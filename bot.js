@@ -93,6 +93,7 @@ const CHANNELS = {
   MOD_LOGS: 'mod-logs',
   SUPPORT_TICKETS: 'support-tickets',
   ASK_LUMI: 'ask-lumi',
+  VERIFY: 'verify',
 };
 
 const ROLES = {
@@ -875,6 +876,7 @@ const commands = [
   new SlashCommandBuilder().setName('setuptickets').setDescription('Setup ticket system').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('stats').setDescription('Server stats').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder().setName('ask').setDescription('Ask Lumi a question').addStringOption(o => o.setName('question').setDescription('Your question').setRequired(true)),
+  new SlashCommandBuilder().setName('setupverify').setDescription('Setup verification posts in #verify channel').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -1248,7 +1250,14 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
       await introChannel.send({
         embeds: [new EmbedBuilder()
           .setColor('#2ECC71')
-          .setDescription(`🎉 Welcome ${newMember} to **Lumist.ai**!`)
+          .setTitle(`Welcome to Lumist.ai!`)
+          .setDescription(`Hey ${newMember}! We're excited to have you here.\n\n` +
+            `**Quick Links:**\n` +
+            `• Check out the <#${(await findChannel(newMember.guild, CHANNELS.RULES))?.id || 'rules'}> channel\n` +
+            `• Get verified in <#${(await findChannel(newMember.guild, 'verify'))?.id || 'verify'}>\n` +
+            `• Ask questions in <#${(await findChannel(newMember.guild, CHANNELS.ASK_LUMI))?.id || 'ask-lumi'}>\n\n` +
+            `Tell us about yourself! What grade are you in and what SAT score are you aiming for?`)
+          .setThumbnail(newMember.user.displayAvatarURL({ dynamic: true }))
           .setTimestamp()
         ]
       });
@@ -1378,7 +1387,59 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.channel.send(createTicketEmbed());
       await interaction.reply({ content: '✅ Ticket system set up!', ephemeral: true });
     }
-    
+
+    if (commandName === 'setupverify') {
+      // Create FAQ-style verification posts for #verify channel
+      const verifyChannel = await findChannel(interaction.guild, 'verify');
+      if (!verifyChannel) {
+        return interaction.reply({ content: '❌ #verify channel not found!', ephemeral: true });
+      }
+
+      // Post 1: Lumist.ai Verification
+      const lumistVerifyEmbed = new EmbedBuilder()
+        .setColor('#5865F2')
+        .setTitle('✅ Lumist.ai Account Verification')
+        .setDescription('Link your Lumist.ai account to unlock exclusive benefits!')
+        .addFields(
+          { name: '🎁 Benefits', value: '• Get the ✅ Verified badge\n• Display your referral code\n• Appear on leaderboards\n• Premium users get 💎 Premium role automatically' },
+          { name: '📝 How to Verify', value: 'Click the button below to start the verification process.\n\n*Don\'t have an account yet? Sign up at [lumist.ai](https://lumist.ai)*' }
+        )
+        .setThumbnail('https://lumist.ai/logo.png');
+
+      const lumistVerifyRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('verify_lumist')
+          .setLabel('Verify Lumist.ai Account')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('✅')
+      );
+
+      // Post 2: Alumni Verification
+      const alumniVerifyEmbed = new EmbedBuilder()
+        .setColor('#F1C40F')
+        .setTitle('🎓 Alumni Verification')
+        .setDescription('Prove you\'re a college student to earn the Alumni role!')
+        .addFields(
+          { name: '🎁 Benefits', value: '• Get the 🎓 Alumni role\n• Access to alumni-only channels\n• Mentor high school students\n• Share your college experience' },
+          { name: '📝 Requirements', value: '• Must be currently enrolled in college/university\n• Provide proof of enrollment (student ID, acceptance letter, or .edu email)' },
+          { name: '📋 How to Apply', value: 'Click the button below to submit your alumni verification request. A moderator will review your application.' }
+        )
+        .setThumbnail('https://lumist.ai/alumni-badge.png');
+
+      const alumniVerifyRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('verify_alumni')
+          .setLabel('Apply for Alumni Verification')
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji('🎓')
+      );
+
+      await verifyChannel.send({ embeds: [lumistVerifyEmbed], components: [lumistVerifyRow] });
+      await verifyChannel.send({ embeds: [alumniVerifyEmbed], components: [alumniVerifyRow] });
+
+      await interaction.reply({ content: '✅ Verification posts set up in #verify!', ephemeral: true });
+    }
+
     if (commandName === 'stats') {
       const guild = interaction.guild;
       const members = await guild.members.fetch();
@@ -1432,6 +1493,40 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // Ticket buttons
     if (interaction.customId === 'create_ticket') await interaction.reply(createTicketCategorySelect());
     if (interaction.customId === 'close_ticket') { await interaction.reply({ content: '🔒 Closing...', ephemeral: true }); await closeTicket(interaction.channel); }
+
+    // Verification buttons
+    if (interaction.customId === 'verify_lumist') {
+      // TODO: Configure actual verification link
+      const verifyLink = process.env.LUMIST_VERIFY_URL || 'https://lumist.ai/discord-verify';
+      await interaction.reply({
+        content: `✅ **Lumist.ai Verification**\n\nClick the link below to verify your account:\n${verifyLink}\n\nAfter verifying on the website, you'll automatically receive the ✅ Verified role!`,
+        ephemeral: true
+      });
+    }
+
+    if (interaction.customId === 'verify_alumni') {
+      // Create a ticket for alumni verification
+      const result = await createTicketChannel(interaction.guild, interaction.user, 'Alumni Verification');
+      if (result.error) {
+        await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true });
+      } else {
+        // Send instructions in the ticket
+        await result.channel.send({
+          embeds: [new EmbedBuilder()
+            .setColor('#F1C40F')
+            .setTitle('🎓 Alumni Verification Request')
+            .setDescription(`Welcome ${interaction.user}!\n\nTo get verified as an Alumni, please provide **one** of the following:`)
+            .addFields(
+              { name: '📄 Accepted Documents', value: '• Photo of your student ID (blur sensitive info)\n• College acceptance letter\n• Screenshot of .edu email\n• Enrollment verification letter' },
+              { name: '⚠️ Privacy Note', value: 'Feel free to blur/hide any sensitive personal information. We only need to verify your enrollment status.' },
+              { name: '⏰ Next Steps', value: 'Upload your proof of enrollment here, and a moderator will review it shortly!' }
+            )
+            .setFooter({ text: 'A moderator will review your request' })
+          ]
+        });
+        await interaction.reply({ content: `✅ Alumni verification ticket created! <#${result.channel.id}>`, ephemeral: true });
+      }
+    }
   }
   
   if (interaction.isStringSelectMenu()) {
