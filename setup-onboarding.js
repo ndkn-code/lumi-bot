@@ -32,7 +32,7 @@ function generateSnowflake() {
   return (timestamp | increment).toString();
 }
 
-// Country roles for onboarding (max 25 options allowed by Discord)
+// Country roles for onboarding (Discord limits options per prompt to ~15)
 // Additional roles exist in the server but won't appear in onboarding dropdown
 const COUNTRY_ROLES_FOR_ONBOARDING = [
   { name: '🇺🇸 United States', emoji: '🇺🇸' },
@@ -49,16 +49,7 @@ const COUNTRY_ROLES_FOR_ONBOARDING = [
   { name: '🇲🇾 Malaysia', emoji: '🇲🇾' },
   { name: '🇵🇭 Philippines', emoji: '🇵🇭' },
   { name: '🇮🇩 Indonesia', emoji: '🇮🇩' },
-  { name: '🇹🇼 Taiwan', emoji: '🇹🇼' },
-  { name: '🇭🇰 Hong Kong', emoji: '🇭🇰' },
-  { name: '🇩🇪 Germany', emoji: '🇩🇪' },
-  { name: '🇧🇷 Brazil', emoji: '🇧🇷' },
-  { name: '🇲🇽 Mexico', emoji: '🇲🇽' },
-  { name: '🇳🇬 Nigeria', emoji: '🇳🇬' },
-  { name: '🇦🇪 UAE', emoji: '🇦🇪' },
-  { name: '🇵🇰 Pakistan', emoji: '🇵🇰' },
-  { name: '🇳🇿 New Zealand', emoji: '🇳🇿' },
-  { name: '🌏 Other International', emoji: '🌏' },  // Catch-all for unlisted countries
+  { name: '🌏 Other International', emoji: '🌏', displayTitle: 'Other' },  // Catch-all
 ];
 
 // Grade roles
@@ -232,7 +223,7 @@ async function main() {
     // Prompt 1: Country selection
     const countryOptions = COUNTRY_ROLES_FOR_ONBOARDING.map(country => ({
       id: generateSnowflake(),
-      title: country.name.replace(/^.{1,2}\s/, ''), // Remove emoji prefix for cleaner display
+      title: country.displayTitle || country.name.replace(/^.{1,2}\s/, ''), // Use displayTitle or remove emoji prefix
       emoji: { name: country.emoji },
       role_ids: [countryRoleIds[country.name]],
       channel_ids: [],
