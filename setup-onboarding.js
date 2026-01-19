@@ -32,8 +32,9 @@ function generateSnowflake() {
   return (timestamp | increment).toString();
 }
 
-// Country roles to create (expanded list ~40 countries)
-const COUNTRY_ROLES = [
+// Country roles for onboarding (max 25 options allowed by Discord)
+// Additional roles exist in the server but won't appear in onboarding dropdown
+const COUNTRY_ROLES_FOR_ONBOARDING = [
   { name: '🇺🇸 United States', emoji: '🇺🇸' },
   { name: '🇻🇳 Vietnam', emoji: '🇻🇳' },
   { name: '🇬🇧 United Kingdom', emoji: '🇬🇧' },
@@ -51,30 +52,13 @@ const COUNTRY_ROLES = [
   { name: '🇹🇼 Taiwan', emoji: '🇹🇼' },
   { name: '🇭🇰 Hong Kong', emoji: '🇭🇰' },
   { name: '🇩🇪 Germany', emoji: '🇩🇪' },
-  { name: '🇫🇷 France', emoji: '🇫🇷' },
-  { name: '🇳🇱 Netherlands', emoji: '🇳🇱' },
-  { name: '🇮🇹 Italy', emoji: '🇮🇹' },
-  { name: '🇪🇸 Spain', emoji: '🇪🇸' },
-  { name: '🇵🇹 Portugal', emoji: '🇵🇹' },
   { name: '🇧🇷 Brazil', emoji: '🇧🇷' },
   { name: '🇲🇽 Mexico', emoji: '🇲🇽' },
-  { name: '🇦🇷 Argentina', emoji: '🇦🇷' },
-  { name: '🇨🇴 Colombia', emoji: '🇨🇴' },
   { name: '🇳🇬 Nigeria', emoji: '🇳🇬' },
-  { name: '🇿🇦 South Africa', emoji: '🇿🇦' },
-  { name: '🇪🇬 Egypt', emoji: '🇪🇬' },
   { name: '🇦🇪 UAE', emoji: '🇦🇪' },
-  { name: '🇸🇦 Saudi Arabia', emoji: '🇸🇦' },
   { name: '🇵🇰 Pakistan', emoji: '🇵🇰' },
-  { name: '🇧🇩 Bangladesh', emoji: '🇧🇩' },
-  { name: '🇳🇵 Nepal', emoji: '🇳🇵' },
-  { name: '🇱🇰 Sri Lanka', emoji: '🇱🇰' },
   { name: '🇳🇿 New Zealand', emoji: '🇳🇿' },
-  { name: '🇮🇪 Ireland', emoji: '🇮🇪' },
-  { name: '🇵🇱 Poland', emoji: '🇵🇱' },
-  { name: '🇷🇺 Russia', emoji: '🇷🇺' },
-  { name: '🇹🇷 Turkey', emoji: '🇹🇷' },
-  { name: '🌏 Other International', emoji: '🌏' },
+  { name: '🌏 Other International', emoji: '🌏' },  // Catch-all for unlisted countries
 ];
 
 // Grade roles
@@ -136,7 +120,7 @@ async function main() {
     console.log('\nStep 2: Creating missing country roles...');
     const countryRoleIds = {};
 
-    for (const country of COUNTRY_ROLES) {
+    for (const country of COUNTRY_ROLES_FOR_ONBOARDING) {
       if (roleMap.has(country.name)) {
         countryRoleIds[country.name] = roleMap.get(country.name).id;
         console.log(`   [EXISTS] ${country.name}`);
@@ -246,7 +230,7 @@ async function main() {
     console.log('\nStep 7: Building onboarding configuration...');
 
     // Prompt 1: Country selection
-    const countryOptions = COUNTRY_ROLES.map(country => ({
+    const countryOptions = COUNTRY_ROLES_FOR_ONBOARDING.map(country => ({
       id: generateSnowflake(),
       title: country.name.replace(/^.{1,2}\s/, ''), // Remove emoji prefix for cleaner display
       emoji: { name: country.emoji },
