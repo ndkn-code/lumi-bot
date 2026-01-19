@@ -1,8 +1,8 @@
 # Lumist.ai Discord Server Configuration
 
-> **This file is the source of truth for the Discord server structure.**  
-> When making changes, update this file AND the bot code accordingly.  
-> **Last synced:** January 2026 | **Bot version:** 4.2
+> **This file is the source of truth for the Discord server structure.**
+> When making changes, update this file AND the bot code accordingly.
+> **Last synced:** January 2026 | **Bot version:** 4.3
 
 ---
 
@@ -13,7 +13,7 @@
 | Server Name | Lumist.ai |
 | Server ID | `1456886174600794291` |
 | Bot Name | Lumi |
-| Bot Version | 4.2 |
+| Bot Version | 4.3 |
 
 ---
 
@@ -41,23 +41,35 @@ Roles are listed from highest to lowest. The bot role must be above all roles it
 
 ### Nationality Roles (No Color - Tags Only)
 
-Bot assigns during onboarding based on user selection.
+Assigned via Discord's native onboarding. Expanded list of ~40 countries.
 
-| Role Name | Value in Code | Emoji |
-|-----------|---------------|-------|
-| 🇻🇳 Vietnam | `vietnam` | 🇻🇳 |
-| 🇺🇸 United States | `usa` | 🇺🇸 |
-| 🇬🇧 United Kingdom | `uk` | 🇬🇧 |
-| 🇸🇬 Singapore | `singapore` | 🇸🇬 |
-| 🇰🇷 South Korea | `korea` | 🇰🇷 |
-| 🇯🇵 Japan | `japan` | 🇯🇵 |
-| 🇨🇳 China | `china` | 🇨🇳 |
-| 🇮🇳 India | `india` | 🇮🇳 |
-| 🌏 Other International | `other` | 🌏 |
+| Role Name | Emoji | | Role Name | Emoji |
+|-----------|-------|-|-----------|-------|
+| 🇺🇸 United States | 🇺🇸 | | 🇻🇳 Vietnam | 🇻🇳 |
+| 🇬🇧 United Kingdom | 🇬🇧 | | 🇨🇦 Canada | 🇨🇦 |
+| 🇦🇺 Australia | 🇦🇺 | | 🇮🇳 India | 🇮🇳 |
+| 🇨🇳 China | 🇨🇳 | | 🇯🇵 Japan | 🇯🇵 |
+| 🇰🇷 South Korea | 🇰🇷 | | 🇸🇬 Singapore | 🇸🇬 |
+| 🇹🇭 Thailand | 🇹🇭 | | 🇲🇾 Malaysia | 🇲🇾 |
+| 🇵🇭 Philippines | 🇵🇭 | | 🇮🇩 Indonesia | 🇮🇩 |
+| 🇹🇼 Taiwan | 🇹🇼 | | 🇭🇰 Hong Kong | 🇭🇰 |
+| 🇩🇪 Germany | 🇩🇪 | | 🇫🇷 France | 🇫🇷 |
+| 🇳🇱 Netherlands | 🇳🇱 | | 🇮🇹 Italy | 🇮🇹 |
+| 🇪🇸 Spain | 🇪🇸 | | 🇵🇹 Portugal | 🇵🇹 |
+| 🇧🇷 Brazil | 🇧🇷 | | 🇲🇽 Mexico | 🇲🇽 |
+| 🇦🇷 Argentina | 🇦🇷 | | 🇨🇴 Colombia | 🇨🇴 |
+| 🇳🇬 Nigeria | 🇳🇬 | | 🇿🇦 South Africa | 🇿🇦 |
+| 🇪🇬 Egypt | 🇪🇬 | | 🇦🇪 UAE | 🇦🇪 |
+| 🇸🇦 Saudi Arabia | 🇸🇦 | | 🇵🇰 Pakistan | 🇵🇰 |
+| 🇧🇩 Bangladesh | 🇧🇩 | | 🇳🇵 Nepal | 🇳🇵 |
+| 🇱🇰 Sri Lanka | 🇱🇰 | | 🇳🇿 New Zealand | 🇳🇿 |
+| 🇮🇪 Ireland | 🇮🇪 | | 🇵🇱 Poland | 🇵🇱 |
+| 🇷🇺 Russia | 🇷🇺 | | 🇹🇷 Turkey | 🇹🇷 |
+| 🌏 Other International | 🌏 | | | |
 
 ### Grade Level Roles (No Color - Tags Only)
 
-Bot assigns during onboarding based on user selection.
+Assigned via Discord's native onboarding.
 
 | Role Name | Value in Code | Emoji |
 |-----------|---------------|-------|
@@ -103,53 +115,59 @@ Bot assigns during onboarding based on user selection.
 
 ## Onboarding Flow
 
-The onboarding is a **2-step process** (nationality + grade):
+Uses **Discord's Native Server Onboarding** (configured via Server Settings > Onboarding).
 
 ```
 1. User joins server
-   └─> Bot sends Welcome DM (or fallback to #welcome)
-   
-2. User clicks "🚀 Let's Go!" button
-   └─> Bot shows Nationality dropdown (Step 1 of 2)
-   
-3. User selects Nationality
-   └─> Bot shows Grade dropdown (Step 2 of 2)
-   
-4. User selects Grade
-   └─> Bot shows Rules + Accept button
-   
-5. User clicks "✅ I Accept"
-   └─> Bot assigns roles:
-       - 🌱 Member
-       - Nationality role (e.g., 🇻🇳 Vietnam)
-       - Grade role (e.g., 🎒 Junior)
+   └─> Discord shows native onboarding UI
+
+2. Prompt 1: "Where are you from?" (required)
+   └─> User selects country from ~40 options
+   └─> Discord assigns nationality role
+
+3. Prompt 2: "What grade are you in?" (required)
+   └─> User selects grade level
+   └─> Discord assigns grade role + 🌱 Member role
+
+4. Prompt 3: "What are you interested in?" (optional)
+   └─> User selects interests (SAT Math, Reading, College Apps)
+   └─> Discord opts user into relevant channels
+
+5. Onboarding completes
+   └─> Bot detects Member role assignment
    └─> Bot posts welcome in #introductions
-   └─> User gains access to server
+   └─> User gains full server access
 ```
 
-### Onboarding Options
+### Setup Script
 
-**Nationality Options (Step 1):**
-| Label | Value | Emoji |
-|-------|-------|-------|
-| Vietnam | `vietnam` | 🇻🇳 |
-| United States | `usa` | 🇺🇸 |
-| United Kingdom | `uk` | 🇬🇧 |
-| Singapore | `singapore` | 🇸🇬 |
-| South Korea | `korea` | 🇰🇷 |
-| Japan | `japan` | 🇯🇵 |
-| China | `china` | 🇨🇳 |
-| India | `india` | 🇮🇳 |
-| Other | `other` | 🌏 |
+Run `setup-onboarding.js` to configure Discord's native onboarding:
 
-**Grade Options (Step 2):**
-| Label | Value | Emoji |
-|-------|-------|-------|
-| Freshman (Grade 9) | `freshman` | 📗 |
-| Sophomore (Grade 10) | `sophomore` | 📘 |
-| Junior (Grade 11) | `junior` | 📙 |
-| Senior (Grade 12) | `senior` | 📕 |
-| Gap Year / Other | `gap_year` | 📓 |
+```bash
+BOT_TOKEN=your_token node setup-onboarding.js
+```
+
+This creates country roles and configures the onboarding prompts.
+
+### Onboarding Prompts
+
+**Prompt 1: Country Selection** - See Nationality Roles table above (~40 countries)
+
+**Prompt 2: Grade Selection:**
+| Label | Role Assigned | Emoji |
+|-------|---------------|-------|
+| Freshman (Grade 9) | 🎒 Freshman + 🌱 Member | 📗 |
+| Sophomore (Grade 10) | 🎒 Sophomore + 🌱 Member | 📘 |
+| Junior (Grade 11) | 🎒 Junior + 🌱 Member | 📙 |
+| Senior (Grade 12) | 🎒 Senior + 🌱 Member | 📕 |
+| Gap Year / College | 🎒 Gap Year + 🌱 Member | 📓 |
+
+**Prompt 3: Interests (Optional):**
+| Label | Channels Opted Into |
+|-------|---------------------|
+| SAT Math | #sat-math |
+| SAT Reading & Writing | #sat-reading |
+| College Applications | #college-apps |
 
 ---
 
@@ -340,6 +358,10 @@ Users can interact with Lumi AI in these ways:
 
 | Date | Change | By |
 |------|--------|-----|
+| 2026-01-19 | v4.3: Migrated to Discord native onboarding | Claude |
+| 2026-01-19 | Expanded nationality options to ~40 countries | Claude |
+| 2026-01-19 | Added interests prompt (SAT Math, Reading, College Apps) | Claude |
+| 2026-01-19 | Removed bot DM-based onboarding | Claude |
 | 2026-01-19 | Updated to v4.2, added escalation system | Claude |
 | 2026-01-19 | Simplified onboarding to 2 steps (removed score) | User |
 | 2026-01-19 | Added UK, Singapore, India nationalities | User |
