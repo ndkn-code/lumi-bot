@@ -1915,40 +1915,41 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.editReply({ content: `🗑️ Deleted ${deleted} existing posts. Now creating new posts...` });
         }
 
-        // Vietnam universities that accept SAT - Hanoi and Ho Chi Minh focus
+        // Vietnam universities that accept SAT - with city and type tags
+        // Tags match: 🏙️ Hà Nội, 🌆 TP.HCM, 🏛️ Top University, 🔬 Tech/Engineering, 💼 Business/Economics, 🩺 Medical, 🎨 Arts/Humanities
         const vnUniversities = [
           // Hanoi-only universities
-          { code: 'NEU', name: 'Đại Học Kinh Tế Quốc Dân', city: 'Hà Nội' },
-          { code: 'HUST', name: 'Đại Học Bách Khoa Hà Nội', city: 'Hà Nội' },
-          { code: 'TMU', name: 'Đại Học Thương Mại', city: 'Hà Nội' },
-          { code: 'DAV', name: 'Học Viện Ngoại Giao', city: 'Hà Nội' },
-          { code: 'BFAV', name: 'Học Viện Ngân Hàng', city: 'Hà Nội' },
-          { code: 'AOF', name: 'Học Viện Tài Chính', city: 'Hà Nội' },
-          { code: 'HANU', name: 'Đại Học Hà Nội', city: 'Hà Nội' },
-          { code: 'NUCE', name: 'Đại Học Xây Dựng Hà Nội', city: 'Hà Nội' },
+          { code: 'NEU', name: 'Đại Học Kinh Tế Quốc Dân', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '💼 Business/Economics', '🏛️ Top University'] },
+          { code: 'HUST', name: 'Đại Học Bách Khoa Hà Nội', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '🔬 Tech/Engineering', '🏛️ Top University'] },
+          { code: 'TMU', name: 'Đại Học Thương Mại', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '💼 Business/Economics'] },
+          { code: 'DAV', name: 'Học Viện Ngoại Giao', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '🎨 Arts/Humanities'] },
+          { code: 'BFAV', name: 'Học Viện Ngân Hàng', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '💼 Business/Economics'] },
+          { code: 'AOF', name: 'Học Viện Tài Chính', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '💼 Business/Economics'] },
+          { code: 'HANU', name: 'Đại Học Hà Nội', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '🎨 Arts/Humanities'] },
+          { code: 'NUCE', name: 'Đại Học Xây Dựng Hà Nội', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '🔬 Tech/Engineering'] },
           // VNU Hanoi
-          { code: 'VNU-UED', name: 'Đại Học Giáo Dục - ĐHQGHN', city: 'Hà Nội' },
-          { code: 'VNU-ULIS', name: 'Đại Học Ngoại Ngữ - ĐHQGHN', city: 'Hà Nội' },
-          { code: 'VNU-IS', name: 'Khoa Quốc Tế - ĐHQGHN', city: 'Hà Nội' },
-          { code: 'VNU-SB', name: 'Khoa Quản Trị Kinh Doanh - ĐHQGHN', city: 'Hà Nội' },
-          { code: 'VJU', name: 'Đại Học Việt Nhật - ĐHQGHN', city: 'Hà Nội' },
+          { code: 'VNU-UED', name: 'Đại Học Giáo Dục - ĐHQGHN', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '🎨 Arts/Humanities', '🏛️ Top University'] },
+          { code: 'VNU-ULIS', name: 'Đại Học Ngoại Ngữ - ĐHQGHN', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '🎨 Arts/Humanities', '🏛️ Top University'] },
+          { code: 'VNU-IS', name: 'Khoa Quốc Tế - ĐHQGHN', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '💼 Business/Economics', '🏛️ Top University'] },
+          { code: 'VNU-SB', name: 'Khoa Quản Trị Kinh Doanh - ĐHQGHN', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '💼 Business/Economics', '🏛️ Top University'] },
+          { code: 'VJU', name: 'Đại Học Việt Nhật - ĐHQGHN', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '🔬 Tech/Engineering', '🏛️ Top University'] },
           // Medical/Military (Hanoi)
-          { code: 'HMU', name: 'Đại Học Y Hà Nội', city: 'Hà Nội' },
-          { code: 'MMA', name: 'Học Viện Quân Y', city: 'Hà Nội' },
+          { code: 'HMU', name: 'Đại Học Y Hà Nội', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '🩺 Medical', '🏛️ Top University'] },
+          { code: 'MMA', name: 'Học Viện Quân Y', city: 'Hà Nội', tags: ['🏙️ Hà Nội', '🩺 Medical'] },
           // Multi-campus universities (Hà Nội & TP.HCM)
-          { code: 'FTU', name: 'Đại Học Ngoại Thương', city: 'Hà Nội & TP.HCM' },
-          { code: 'PTIT', name: 'Học Viện Công Nghệ Bưu Chính Viễn Thông', city: 'Hà Nội & TP.HCM' },
-          { code: 'RMIT-VN', name: 'RMIT Vietnam', city: 'TP.HCM & Hà Nội' },
+          { code: 'FTU', name: 'Đại Học Ngoại Thương', city: 'Hà Nội & TP.HCM', tags: ['🏙️ Hà Nội', '🌆 TP.HCM', '💼 Business/Economics', '🏛️ Top University'] },
+          { code: 'PTIT', name: 'Học Viện Công Nghệ Bưu Chính Viễn Thông', city: 'Hà Nội & TP.HCM', tags: ['🏙️ Hà Nội', '🌆 TP.HCM', '🔬 Tech/Engineering'] },
+          { code: 'RMIT-VN', name: 'RMIT Vietnam', city: 'TP.HCM & Hà Nội', tags: ['🌆 TP.HCM', '🏙️ Hà Nội', '💼 Business/Economics', '🔬 Tech/Engineering', '🏛️ Top University'] },
           // Ho Chi Minh City-only universities
-          { code: 'UEH', name: 'Đại Học Kinh Tế TP.HCM', city: 'TP.HCM' },
-          { code: 'HCMUT', name: 'Đại Học Bách Khoa TP.HCM', city: 'TP.HCM' },
-          { code: 'UMP', name: 'Đại Học Y Dược TP.HCM', city: 'TP.HCM' },
-          { code: 'UEL', name: 'Đại Học Kinh Tế - Luật TP.HCM', city: 'TP.HCM' },
-          { code: 'HCMUARC', name: 'Đại Học Kiến Trúc TP.HCM', city: 'TP.HCM' },
-          { code: 'OU-HCMC', name: 'Đại Học Mở TP.HCM', city: 'TP.HCM' },
-          { code: 'BUH', name: 'Đại Học Ngân Hàng TP.HCM', city: 'TP.HCM' },
-          { code: 'HIU', name: 'Đại Học Quốc Tế Hồng Bàng', city: 'TP.HCM' },
-          { code: 'TDTU', name: 'Đại Học Tôn Đức Thắng', city: 'TP.HCM' },
+          { code: 'UEH', name: 'Đại Học Kinh Tế TP.HCM', city: 'TP.HCM', tags: ['🌆 TP.HCM', '💼 Business/Economics', '🏛️ Top University'] },
+          { code: 'HCMUT', name: 'Đại Học Bách Khoa TP.HCM', city: 'TP.HCM', tags: ['🌆 TP.HCM', '🔬 Tech/Engineering', '🏛️ Top University'] },
+          { code: 'UMP', name: 'Đại Học Y Dược TP.HCM', city: 'TP.HCM', tags: ['🌆 TP.HCM', '🩺 Medical', '🏛️ Top University'] },
+          { code: 'UEL', name: 'Đại Học Kinh Tế - Luật TP.HCM', city: 'TP.HCM', tags: ['🌆 TP.HCM', '💼 Business/Economics'] },
+          { code: 'HCMUARC', name: 'Đại Học Kiến Trúc TP.HCM', city: 'TP.HCM', tags: ['🌆 TP.HCM', '🎨 Arts/Humanities'] },
+          { code: 'OU-HCMC', name: 'Đại Học Mở TP.HCM', city: 'TP.HCM', tags: ['🌆 TP.HCM', '💼 Business/Economics'] },
+          { code: 'BUH', name: 'Đại Học Ngân Hàng TP.HCM', city: 'TP.HCM', tags: ['🌆 TP.HCM', '💼 Business/Economics'] },
+          { code: 'HIU', name: 'Đại Học Quốc Tế Hồng Bàng', city: 'TP.HCM', tags: ['🌆 TP.HCM', '💼 Business/Economics', '🩺 Medical'] },
+          { code: 'TDTU', name: 'Đại Học Tôn Đức Thắng', city: 'TP.HCM', tags: ['🌆 TP.HCM', '🔬 Tech/Engineering', '💼 Business/Economics', '🏛️ Top University'] },
         ];
 
         // Get existing threads to avoid duplicates
@@ -1963,6 +1964,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         let skipped = 0;
         const results = [];
 
+        // Get available tags from the forum channel
+        const availableTags = forumChannel.availableTags;
+        const tagMap = new Map(availableTags.map(t => [t.name, t.id]));
+
         await interaction.editReply({ content: `🔄 Starting population of Vietnam colleges... (0/${vnUniversities.length})` });
 
         for (const uni of vnUniversities) {
@@ -1974,6 +1979,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
             results.push(`⏭️ Skipped: ${postName} (already exists)`);
             continue;
           }
+
+          // Map university tags to forum tag IDs (max 5 tags per post)
+          const appliedTagIds = uni.tags
+            .map(tagName => tagMap.get(tagName))
+            .filter(id => id !== undefined)
+            .slice(0, 5);
 
           // Build the wiki embed
           const wikiEmbed = new EmbedBuilder()
@@ -1992,10 +2003,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             await forumChannel.threads.create({
               name: postName,
               message: { embeds: [wikiEmbed] },
-              appliedTags: [],
+              appliedTags: appliedTagIds,
             });
             created++;
-            results.push(`✅ Created: ${postName}`);
+            results.push(`✅ Created: ${postName} [${uni.tags.length} tags]`);
 
             // Rate limit: wait a bit between creates
             await new Promise(resolve => setTimeout(resolve, 1000));
