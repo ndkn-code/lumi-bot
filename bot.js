@@ -1497,9 +1497,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           appliedTags: lumistTag ? [lumistTag.id] : [],
         });
 
-        // Pin the lumist thread
-        await lumistThread.pin();
-        console.log('📌 Created and pinned Lumist.ai verification post');
+        console.log('📌 Created Lumist.ai verification post');
 
         // Create Forum Post 2: Alumni Verification
         const alumniVerifyEmbed = new EmbedBuilder()
@@ -1529,16 +1527,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
           appliedTags: alumniTag ? [alumniTag.id] : [],
         });
 
-        // Pin the alumni thread
-        await alumniThread.pin();
-        console.log('📌 Created and pinned Alumni verification post');
+        console.log('📌 Created Alumni verification post');
+
+        // Pin only the Lumist thread (Discord only allows 1 pinned thread per forum)
+        await lumistThread.pin();
+        console.log('📌 Pinned Lumist.ai verification post');
 
         await interaction.editReply({
           content: `✅ **Verification forum set up!**\n\n` +
             `Created forum channel: <#${forumChannel.id}>\n\n` +
             `**Posts created:**\n` +
             `• ✅ Lumist.ai Account Verification (pinned)\n` +
-            `• 🎓 Alumni Verification (pinned)\n\n` +
+            `• 🎓 Alumni Verification\n\n` +
             `**Permissions:**\n` +
             `• Regular users can view but cannot create new posts\n` +
             `• Moderators and above can create and manage posts`,
