@@ -1,5 +1,5 @@
 /**
- * Lumist.ai Discord Bot v4.5
+ * Lumist.ai Discord Bot v4.6
  *
  * Features:
  * - Native Discord Onboarding (via Server Settings)
@@ -12,6 +12,7 @@
  * - Forum-based Verification System
  * - College Application Forums (US + Vietnam)
  * - Brain Teaser Channel
+ * - Bulk Vietnam college population command
  */
 
 const {
@@ -887,6 +888,7 @@ const commands = [
   new SlashCommandBuilder().setName('setupverify').setDescription('Setup verification forum channel with pinned posts').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('setupcollegeforums').setDescription('Setup US and Vietnam college application forum channels').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('addcollege').setDescription('Add a new college post to a college forum').addStringOption(o => o.setName('forum').setDescription('Which forum').setRequired(true).addChoices({ name: 'US College Apps', value: 'us' }, { name: 'Vietnam College Apps', value: 'vn' })).addStringOption(o => o.setName('name').setDescription('College name (e.g., Stanford University)').setRequired(true)).addStringOption(o => o.setName('deadline').setDescription('Application deadline (e.g., Jan 1, 2026)')).addStringOption(o => o.setName('avg_sat').setDescription('Average SAT score (e.g., 1500-1570)')).addStringOption(o => o.setName('avg_gpa').setDescription('Average GPA (e.g., 3.9-4.0)')).addStringOption(o => o.setName('link').setDescription('Link to application requirements')).setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  new SlashCommandBuilder().setName('populatevncolleges').setDescription('Bulk add Vietnam universities that accept SAT to the VN forum').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -1873,6 +1875,127 @@ client.on(Events.InteractionCreate, async (interaction) => {
         console.log(`🏫 Created college post: ${collegeName} in ${channelName}`);
       } catch (error) {
         console.error('❌ Error adding college:', error);
+        await interaction.editReply({ content: `❌ Error: ${error.message}` });
+      }
+    }
+
+    if (commandName === 'populatevncolleges') {
+      await interaction.deferReply({ ephemeral: true });
+
+      try {
+        const guild = interaction.guild;
+        const channels = await guild.channels.fetch();
+
+        // Find the Vietnam college forum
+        const forumChannel = channels.find(c => c.name === CHANNELS.COLLEGE_APPS_VN && c.type === ChannelType.GuildForum);
+        if (!forumChannel) {
+          return interaction.editReply({ content: `❌ Forum channel \`#${CHANNELS.COLLEGE_APPS_VN}\` not found. Run \`/setupcollegeforums\` first.` });
+        }
+
+        // Vietnam universities that accept SAT - Hanoi and Ho Chi Minh focus
+        const vnUniversities = [
+          // Hanoi
+          { code: 'FTU', name: 'Đại Học Ngoại Thương', city: 'Hà Nội' },
+          { code: 'NEU', name: 'Đại Học Kinh Tế Quốc Dân', city: 'Hà Nội' },
+          { code: 'HUST', name: 'Đại Học Bách Khoa Hà Nội', city: 'Hà Nội' },
+          { code: 'TMU', name: 'Đại Học Thương Mại', city: 'Hà Nội' },
+          { code: 'DAV', name: 'Học Viện Ngoại Giao', city: 'Hà Nội' },
+          { code: 'BFAV', name: 'Học Viện Ngân Hàng', city: 'Hà Nội' },
+          { code: 'AOF', name: 'Học Viện Tài Chính', city: 'Hà Nội' },
+          { code: 'PTIT', name: 'Học Viện Công Nghệ Bưu Chính Viễn Thông', city: 'Hà Nội' },
+          { code: 'HANU', name: 'Đại Học Hà Nội', city: 'Hà Nội' },
+          { code: 'NUCE', name: 'Đại Học Xây Dựng Hà Nội', city: 'Hà Nội' },
+          // VNU Hanoi
+          { code: 'VNU-UED', name: 'Đại Học Giáo Dục - ĐHQGHN', city: 'Hà Nội' },
+          { code: 'VNU-ULIS', name: 'Đại Học Ngoại Ngữ - ĐHQGHN', city: 'Hà Nội' },
+          { code: 'VNU-IS', name: 'Khoa Quốc Tế - ĐHQGHN', city: 'Hà Nội' },
+          { code: 'VNU-SB', name: 'Khoa Quản Trị Kinh Doanh - ĐHQGHN', city: 'Hà Nội' },
+          { code: 'VJU', name: 'Đại Học Việt Nhật - ĐHQGHN', city: 'Hà Nội' },
+          // Medical/Military
+          { code: 'HUP', name: 'Đại Học Y Hà Nội', city: 'Hà Nội' },
+          { code: 'MSA', name: 'Học Viện Quân Y', city: 'Hà Nội' },
+          // Ho Chi Minh City
+          { code: 'HCMUARC', name: 'Đại Học Kiến Trúc TP.HCM', city: 'TP.HCM' },
+          { code: 'UEH', name: 'Đại Học Kinh Tế TP.HCM', city: 'TP.HCM' },
+          { code: 'UMP', name: 'Đại Học Y Dược TP.HCM', city: 'TP.HCM' },
+          { code: 'HCMUT', name: 'Đại Học Bách Khoa TP.HCM', city: 'TP.HCM' },
+          { code: 'UEL', name: 'Đại Học Kinh Tế - Luật', city: 'TP.HCM' },
+          { code: 'OU-HCMC', name: 'Đại Học Mở TP.HCM', city: 'TP.HCM' },
+          { code: 'HIU', name: 'Đại Học Quốc Tế Hồng Bàng', city: 'TP.HCM' },
+          { code: 'TDTU', name: 'Đại Học Tôn Đức Thắng', city: 'TP.HCM' },
+          { code: 'GW-VN', name: 'George Washington University Vietnam', city: 'TP.HCM' },
+        ];
+
+        // Get existing threads to avoid duplicates
+        const existingThreads = await forumChannel.threads.fetchActive();
+        const archivedThreads = await forumChannel.threads.fetchArchived();
+        const allExistingNames = new Set([
+          ...existingThreads.threads.map(t => t.name.toLowerCase()),
+          ...archivedThreads.threads.map(t => t.name.toLowerCase()),
+        ]);
+
+        let created = 0;
+        let skipped = 0;
+        const results = [];
+
+        await interaction.editReply({ content: `🔄 Starting population of Vietnam colleges... (0/${vnUniversities.length})` });
+
+        for (const uni of vnUniversities) {
+          const postName = `${uni.code} - ${uni.name}`;
+
+          // Check if already exists
+          if (allExistingNames.has(postName.toLowerCase())) {
+            skipped++;
+            results.push(`⏭️ Skipped: ${postName} (already exists)`);
+            continue;
+          }
+
+          // Build the wiki embed
+          const wikiEmbed = new EmbedBuilder()
+            .setColor('#E74C3C')
+            .setTitle(`🇻🇳 ${postName}`)
+            .setDescription(`Chào mừng đến với thread thảo luận **${uni.name}**!\n\nChia sẻ điểm số, thảo luận hồ sơ, đặt câu hỏi, và kết nối với các thí sinh khác.`)
+            .addFields(
+              { name: '📍 Thành phố', value: uni.city, inline: true },
+              { name: '📋 Phương thức xét tuyển', value: 'SAT Score', inline: true },
+              { name: '💡 Hướng dẫn thảo luận', value: '• Tôn trọng và hỗ trợ lẫn nhau\n• Chia sẻ điểm số và kinh nghiệm\n• Đặt câu hỏi về hồ sơ và yêu cầu\n• Chúc mừng khi đỗ, động viên khi trượt\n• Không chia sẻ tài liệu mật', inline: false }
+            )
+            .setFooter({ text: `Created via /populatevncolleges • Follow this post to get notified` })
+            .setTimestamp();
+
+          try {
+            await forumChannel.threads.create({
+              name: postName,
+              message: { embeds: [wikiEmbed] },
+              appliedTags: [],
+            });
+            created++;
+            results.push(`✅ Created: ${postName}`);
+
+            // Rate limit: wait a bit between creates
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Update progress every 5 universities
+            if ((created + skipped) % 5 === 0) {
+              await interaction.editReply({ content: `🔄 Processing Vietnam colleges... (${created + skipped}/${vnUniversities.length})` });
+            }
+          } catch (err) {
+            results.push(`❌ Failed: ${postName} - ${err.message}`);
+          }
+        }
+
+        // Final summary
+        const summary = `✅ **Vietnam College Forum Population Complete!**\n\n` +
+          `**Created:** ${created} new posts\n` +
+          `**Skipped:** ${skipped} (already existed)\n` +
+          `**Total Universities:** ${vnUniversities.length}\n\n` +
+          `Forum: <#${forumChannel.id}>\n\n` +
+          `*Details:*\n${results.slice(0, 20).join('\n')}${results.length > 20 ? `\n...and ${results.length - 20} more` : ''}`;
+
+        await interaction.editReply({ content: summary });
+        console.log(`🇻🇳 Populated VN college forum: ${created} created, ${skipped} skipped`);
+      } catch (error) {
+        console.error('❌ Error populating VN colleges:', error);
         await interaction.editReply({ content: `❌ Error: ${error.message}` });
       }
     }
