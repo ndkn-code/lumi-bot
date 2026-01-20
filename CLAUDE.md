@@ -1,6 +1,6 @@
 # Lumist Discord Bot - Development Guide
 
-> **Version:** 4.3
+> **Version:** 4.5
 > **Last synced:** January 2026
 
 ## Project Overview
@@ -10,7 +10,9 @@ This is the Lumi Bot for the Lumist.ai Discord server. It handles:
 - Auto-moderation (spam, links, raids, banned words)
 - Slash commands for moderators
 - Ticket system for support
-- **Verification system** - Lumist.ai account linking + Alumni verification
+- **Forum-based Verification system** - Lumist.ai account linking + Alumni verification via forum posts
+- **College Application Forums** - US and Vietnam-specific college discussion forums
+- **Brain Teaser channel** - Daily SAT-style questions from Lumist.ai
 - Analytics pipeline to Supabase
 - AI chatbot via n8n integration
 - **Escalation system** for human takeover from AI
@@ -79,6 +81,9 @@ const CHANNELS = {
   SUPPORT_TICKETS: 'support-tickets',
   ASK_LUMI: 'ask-lumi',
   VERIFY: 'verify',
+  BRAIN_TEASER: 'brain-teaser',
+  COLLEGE_APPS_US: 'us-college-apps',
+  COLLEGE_APPS_VN: 'vietnam-college-apps',
 };
 ```
 
@@ -223,28 +228,92 @@ To modify onboarding:
 
 ---
 
-## Verification System
+## Verification System (Forum Channel)
 
-The #verify channel uses a FAQ-style layout with two verification options:
+The #verify channel is a **Forum Channel** with two pinned posts for verification. Regular users can view but cannot create new posts - only moderators and above can.
+
+### Forum Structure
+- Channel type: Forum
+- Tags: `✅ Lumist.ai`, `🎓 Alumni`
+- Pinned posts: 2 (one for each verification type)
 
 ### Lumist.ai Verification
-- Users click button → receive verification link (ephemeral)
+- Users click button in the pinned post → receive verification link (ephemeral)
 - Link configurable via `LUMIST_VERIFY_URL` environment variable
 - Successful verification grants ✅ Verified role
 - Premium users automatically get 💎 Premium role
 
 ### Alumni Verification
-- Users click button → creates a ticket channel
+- Users click button in the pinned post → creates a private ticket channel
 - User submits proof of college enrollment (student ID, acceptance letter, .edu email)
 - Moderator reviews and grants 🎓 Alumni role
-- Ticket auto-closes after verification
+- Ticket closes after verification
+
+### Permissions
+- `@everyone`: Can view channel, cannot create posts or reply
+- `Moderator+`: Can view, create posts, and manage threads
+- `Bot`: Full access
 
 ### Setup
-Run `/setupverify` in any channel to post the verification embeds to #verify.
+Run `/setupverify` to:
+1. Delete existing #verify channel (if any)
+2. Create new Forum channel
+3. Create and pin both verification posts
+4. Set proper permissions
 
 ### Button IDs
 - `verify_lumist` - Opens Lumist.ai verification flow
 - `verify_alumni` - Creates alumni verification ticket
+
+---
+
+## Brain Teaser Channel
+
+The `#brain-teaser` channel under SAT STUDY posts daily SAT-style questions from Lumist.ai.
+
+- **Type:** Text channel (read-only for users)
+- **Bot posts:** Daily brain teaser questions
+- **Logic:** To be implemented via n8n or external trigger
+
+---
+
+## College Application Forums
+
+Two forum channels for college discussions. Each university gets ONE dedicated post.
+
+### Channels
+- `#us-college-apps` - US college applications (public)
+- `#vietnam-college-apps` - Vietnam college applications (Vietnam role only)
+
+### How It Works
+1. **One post per university** - Moderators create posts using `/addcollege`
+2. **Users can discuss** - Everyone can reply in threads, but cannot create new posts
+3. **Tag filtering** - Users filter by Region, Type, or Status tags
+4. **Wiki post** - First message contains deadlines, stats, and requirements link
+
+### Commands
+
+**`/setupcollegeforums`** (Admin)
+Creates the brain-teaser channel and both college forum channels with proper permissions and tags.
+
+**`/addcollege`** (Moderator)
+Adds a new university post to a college forum.
+
+```
+/addcollege forum:US College Apps name:Stanford University deadline:Jan 2, 2026 avg_sat:1500-1570
+```
+
+### Tags
+
+**US Forum:**
+- Region: Northeast, West Coast, South, Midwest, International
+- Type: Ivy League, Liberal Arts, State School, HBCU, Tech/STEM
+- Status: Early Action, Early Decision, Regular Decision, Waitlist
+
+**Vietnam Forum:**
+- City: Hà Nội, TP.HCM, Đà Nẵng, Other Cities
+- Type: Top University, Tech/Engineering, Business/Economics, Medical, Arts/Humanities
+- Status: Application Open, Accepted, Waiting
 
 ---
 

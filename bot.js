@@ -1,5 +1,5 @@
 /**
- * Lumist.ai Discord Bot v4.3
+ * Lumist.ai Discord Bot v4.5
  *
  * Features:
  * - Native Discord Onboarding (via Server Settings)
@@ -9,6 +9,9 @@
  * - Analytics pipeline (Supabase integration)
  * - AI Chatbot via n8n
  * - Escalation System
+ * - Forum-based Verification System
+ * - College Application Forums (US + Vietnam)
+ * - Brain Teaser Channel
  */
 
 const {
@@ -26,6 +29,8 @@ const {
   Routes,
   ChannelType,
   Partials,
+  ForumLayoutType,
+  SortOrderType,
 } = require('discord.js');
 
 const http = require('http');
@@ -94,6 +99,9 @@ const CHANNELS = {
   SUPPORT_TICKETS: 'support-tickets',
   ASK_LUMI: 'ask-lumi',
   VERIFY: 'verify',
+  BRAIN_TEASER: 'brain-teaser',
+  COLLEGE_APPS_US: 'us-college-apps',
+  COLLEGE_APPS_VN: 'vietnam-college-apps',
 };
 
 const ROLES = {
@@ -876,7 +884,9 @@ const commands = [
   new SlashCommandBuilder().setName('setuptickets').setDescription('Setup ticket system').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('stats').setDescription('Server stats').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder().setName('ask').setDescription('Ask Lumi a question').addStringOption(o => o.setName('question').setDescription('Your question').setRequired(true)),
-  new SlashCommandBuilder().setName('setupverify').setDescription('Setup verification posts in #verify channel').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('setupverify').setDescription('Setup verification forum channel with pinned posts').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('setupcollegeforums').setDescription('Setup US and Vietnam college application forum channels').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('addcollege').setDescription('Add a new college post to a college forum').addStringOption(o => o.setName('forum').setDescription('Which forum').setRequired(true).addChoices({ name: 'US College Apps', value: 'us' }, { name: 'Vietnam College Apps', value: 'vn' })).addStringOption(o => o.setName('name').setDescription('College name (e.g., Stanford University)').setRequired(true)).addStringOption(o => o.setName('deadline').setDescription('Application deadline (e.g., Jan 1, 2026)')).addStringOption(o => o.setName('avg_sat').setDescription('Average SAT score (e.g., 1500-1570)')).addStringOption(o => o.setName('avg_gpa').setDescription('Average GPA (e.g., 3.9-4.0)')).addStringOption(o => o.setName('link').setDescription('Link to application requirements')).setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -1142,7 +1152,7 @@ async function closeTicket(channel) {
 // ============================================
 client.once(Events.ClientReady, async () => {
   console.log('═══════════════════════════════════════════════════════');
-  console.log(`🦊 Lumi Bot v4.3 is online!`);
+  console.log(`🦊 Lumi Bot v4.5 is online!`);
   console.log(`   Logged in as: ${client.user.tag}`);
   console.log(`   Serving guild: ${GUILD_ID}`);
   console.log(`   Analytics: ${SUPABASE_SERVICE_KEY ? 'ENABLED' : 'DISABLED'}`);
@@ -1389,55 +1399,156 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (commandName === 'setupverify') {
-      // Create FAQ-style verification posts for #verify channel
-      const verifyChannel = await findChannel(interaction.guild, 'verify');
-      if (!verifyChannel) {
-        return interaction.reply({ content: '❌ #verify channel not found!', ephemeral: true });
+      await interaction.deferReply({ ephemeral: true });
+
+      try {
+        const guild = interaction.guild;
+
+        // Find and delete existing verify channel if it exists
+        const existingChannel = await findChannel(guild, 'verify');
+        if (existingChannel) {
+          await existingChannel.delete('Replacing with forum channel');
+          console.log('🗑️ Deleted existing #verify channel');
+        }
+
+        // Get roles for permissions
+        const modRole = await findRole(guild, ROLES.MODERATOR);
+        const adminRole = await findRole(guild, ROLES.ADMIN);
+        const founderRole = await findRole(guild, ROLES.FOUNDER);
+
+        // Find the WELCOME & INFO category
+        const channels = await guild.channels.fetch();
+        const welcomeCategory = channels.find(c => c.type === ChannelType.GuildCategory && c.name.toLowerCase().includes('welcome'));
+
+        // Create forum channel with permissions:
+        // - @everyone can view but NOT create posts
+        // - Moderators and above CAN create posts
+        const forumChannel = await guild.channels.create({
+          name: 'verify',
+          type: ChannelType.GuildForum,
+          topic: 'Link your Lumist.ai account to get verified. Choose a verification type below.',
+          parent: welcomeCategory?.id,
+          defaultForumLayout: ForumLayoutType.List,
+          defaultSortOrder: SortOrderType.CreationDate,
+          permissionOverwrites: [
+            // @everyone: can view and read, but CANNOT create threads
+            {
+              id: guild.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+              deny: [PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.CreatePrivateThreads, PermissionFlagsBits.SendMessagesInThreads],
+            },
+            // Bot can do everything
+            {
+              id: client.user.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            },
+            // Moderators can create and manage
+            ...(modRole ? [{
+              id: modRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            }] : []),
+            // Admins can create and manage
+            ...(adminRole ? [{
+              id: adminRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            }] : []),
+            // Founders can create and manage
+            ...(founderRole ? [{
+              id: founderRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            }] : []),
+          ],
+          availableTags: [
+            { name: '✅ Lumist.ai', moderated: true },
+            { name: '🎓 Alumni', moderated: true },
+          ],
+        });
+
+        console.log(`📋 Created forum channel: #${forumChannel.name}`);
+
+        // Get tags
+        const lumistTag = forumChannel.availableTags.find(t => t.name === '✅ Lumist.ai');
+        const alumniTag = forumChannel.availableTags.find(t => t.name === '🎓 Alumni');
+
+        // Create Forum Post 1: Lumist.ai Verification
+        const lumistVerifyEmbed = new EmbedBuilder()
+          .setColor('#5865F2')
+          .setTitle('✅ Lumist.ai Account Verification')
+          .setDescription('Link your Lumist.ai account to unlock exclusive benefits!')
+          .addFields(
+            { name: '🎁 Benefits', value: '• Get the ✅ Verified badge\n• Display your referral code\n• Appear on leaderboards\n• Premium users get 💎 Premium role automatically' },
+            { name: '📝 How to Verify', value: 'Click the button below to start the verification process.\n\n*Don\'t have an account yet? Sign up at [lumist.ai](https://lumist.ai)*' }
+          );
+
+        const lumistVerifyRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('verify_lumist')
+            .setLabel('Verify Lumist.ai Account')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('✅')
+        );
+
+        const lumistThread = await forumChannel.threads.create({
+          name: '✅ Lumist.ai Account Verification',
+          message: {
+            embeds: [lumistVerifyEmbed],
+            components: [lumistVerifyRow],
+          },
+          appliedTags: lumistTag ? [lumistTag.id] : [],
+        });
+
+        // Pin the lumist thread
+        await lumistThread.pin();
+        console.log('📌 Created and pinned Lumist.ai verification post');
+
+        // Create Forum Post 2: Alumni Verification
+        const alumniVerifyEmbed = new EmbedBuilder()
+          .setColor('#F1C40F')
+          .setTitle('🎓 Alumni Verification')
+          .setDescription('Prove you\'re a college student to earn the Alumni role!')
+          .addFields(
+            { name: '🎁 Benefits', value: '• Get the 🎓 Alumni role\n• Access to alumni-only channels\n• Mentor high school students\n• Share your college experience' },
+            { name: '📝 Requirements', value: '• Must be currently enrolled in college/university\n• Provide proof of enrollment (student ID, acceptance letter, or .edu email)' },
+            { name: '📋 How to Apply', value: 'Click the button below to submit your alumni verification request. A moderator will review your application.' }
+          );
+
+        const alumniVerifyRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('verify_alumni')
+            .setLabel('Apply for Alumni Verification')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('🎓')
+        );
+
+        const alumniThread = await forumChannel.threads.create({
+          name: '🎓 Alumni Verification',
+          message: {
+            embeds: [alumniVerifyEmbed],
+            components: [alumniVerifyRow],
+          },
+          appliedTags: alumniTag ? [alumniTag.id] : [],
+        });
+
+        // Pin the alumni thread
+        await alumniThread.pin();
+        console.log('📌 Created and pinned Alumni verification post');
+
+        await interaction.editReply({
+          content: `✅ **Verification forum set up!**\n\n` +
+            `Created forum channel: <#${forumChannel.id}>\n\n` +
+            `**Posts created:**\n` +
+            `• ✅ Lumist.ai Account Verification (pinned)\n` +
+            `• 🎓 Alumni Verification (pinned)\n\n` +
+            `**Permissions:**\n` +
+            `• Regular users can view but cannot create new posts\n` +
+            `• Moderators and above can create and manage posts`,
+        });
+
+        console.log('✅ Verification forum setup complete!');
+      } catch (error) {
+        console.error('❌ Error setting up verify forum:', error);
+        await interaction.editReply({ content: `❌ Error: ${error.message}` });
       }
-
-      // Post 1: Lumist.ai Verification
-      const lumistVerifyEmbed = new EmbedBuilder()
-        .setColor('#5865F2')
-        .setTitle('✅ Lumist.ai Account Verification')
-        .setDescription('Link your Lumist.ai account to unlock exclusive benefits!')
-        .addFields(
-          { name: '🎁 Benefits', value: '• Get the ✅ Verified badge\n• Display your referral code\n• Appear on leaderboards\n• Premium users get 💎 Premium role automatically' },
-          { name: '📝 How to Verify', value: 'Click the button below to start the verification process.\n\n*Don\'t have an account yet? Sign up at [lumist.ai](https://lumist.ai)*' }
-        )
-        .setThumbnail('https://lumist.ai/logo.png');
-
-      const lumistVerifyRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('verify_lumist')
-          .setLabel('Verify Lumist.ai Account')
-          .setStyle(ButtonStyle.Primary)
-          .setEmoji('✅')
-      );
-
-      // Post 2: Alumni Verification
-      const alumniVerifyEmbed = new EmbedBuilder()
-        .setColor('#F1C40F')
-        .setTitle('🎓 Alumni Verification')
-        .setDescription('Prove you\'re a college student to earn the Alumni role!')
-        .addFields(
-          { name: '🎁 Benefits', value: '• Get the 🎓 Alumni role\n• Access to alumni-only channels\n• Mentor high school students\n• Share your college experience' },
-          { name: '📝 Requirements', value: '• Must be currently enrolled in college/university\n• Provide proof of enrollment (student ID, acceptance letter, or .edu email)' },
-          { name: '📋 How to Apply', value: 'Click the button below to submit your alumni verification request. A moderator will review your application.' }
-        )
-        .setThumbnail('https://lumist.ai/alumni-badge.png');
-
-      const alumniVerifyRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('verify_alumni')
-          .setLabel('Apply for Alumni Verification')
-          .setStyle(ButtonStyle.Secondary)
-          .setEmoji('🎓')
-      );
-
-      await verifyChannel.send({ embeds: [lumistVerifyEmbed], components: [lumistVerifyRow] });
-      await verifyChannel.send({ embeds: [alumniVerifyEmbed], components: [alumniVerifyRow] });
-
-      await interaction.reply({ content: '✅ Verification posts set up in #verify!', ephemeral: true });
     }
 
     if (commandName === 'stats') {
@@ -1461,8 +1572,312 @@ client.on(Events.InteractionCreate, async (interaction) => {
         { name: 'Premium', value: `${premium}`, inline: true },
       ).setTimestamp()], ephemeral: true });
     }
+
+    if (commandName === 'setupcollegeforums') {
+      await interaction.deferReply({ ephemeral: true });
+
+      try {
+        const guild = interaction.guild;
+
+        // Get roles for permissions
+        const modRole = await findRole(guild, ROLES.MODERATOR);
+        const adminRole = await findRole(guild, ROLES.ADMIN);
+        const founderRole = await findRole(guild, ROLES.FOUNDER);
+        const vietnamRole = await findRole(guild, ROLES.VIETNAM);
+
+        // Find or create COLLEGE & BEYOND category
+        const channels = await guild.channels.fetch();
+        let collegeCategory = channels.find(c => c.type === ChannelType.GuildCategory && c.name.toLowerCase().includes('college'));
+
+        if (!collegeCategory) {
+          collegeCategory = await guild.channels.create({
+            name: '🎓 COLLEGE & BEYOND',
+            type: ChannelType.GuildCategory,
+          });
+          console.log('📁 Created COLLEGE & BEYOND category');
+        }
+
+        // Find SAT STUDY category for Brain Teaser
+        let satCategory = channels.find(c => c.type === ChannelType.GuildCategory && c.name.toLowerCase().includes('sat'));
+
+        // Delete existing college channels if they exist
+        const existingUSChannel = channels.find(c => c.name === CHANNELS.COLLEGE_APPS_US);
+        const existingVNChannel = channels.find(c => c.name === CHANNELS.COLLEGE_APPS_VN);
+        const existingBrainTeaser = channels.find(c => c.name === CHANNELS.BRAIN_TEASER);
+
+        if (existingUSChannel) {
+          await existingUSChannel.delete('Recreating college forum');
+          console.log('🗑️ Deleted existing US college apps channel');
+        }
+        if (existingVNChannel) {
+          await existingVNChannel.delete('Recreating college forum');
+          console.log('🗑️ Deleted existing Vietnam college apps channel');
+        }
+        if (existingBrainTeaser) {
+          await existingBrainTeaser.delete('Recreating brain teaser channel');
+          console.log('🗑️ Deleted existing brain teaser channel');
+        }
+
+        // ============================================
+        // CREATE BRAIN TEASER CHANNEL
+        // ============================================
+        const brainTeaserChannel = await guild.channels.create({
+          name: CHANNELS.BRAIN_TEASER,
+          type: ChannelType.GuildText,
+          topic: '🧠 Daily brain teasers from Lumist.ai! Test your skills with challenging SAT-style questions.',
+          parent: satCategory?.id,
+          permissionOverwrites: [
+            // @everyone can view and read but not send messages
+            {
+              id: guild.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+              deny: [PermissionFlagsBits.SendMessages],
+            },
+            // Bot can send messages
+            {
+              id: client.user.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages],
+            },
+            // Moderators can send
+            ...(modRole ? [{
+              id: modRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
+            }] : []),
+          ],
+        });
+        console.log(`📋 Created brain teaser channel: #${brainTeaserChannel.name}`);
+
+        // ============================================
+        // US COLLEGE APPLICATIONS TAGS
+        // ============================================
+        const usCollegeTags = [
+          // Region tags
+          { name: '🌲 Northeast', moderated: false },
+          { name: '☀️ West Coast', moderated: false },
+          { name: '🤠 South', moderated: false },
+          { name: '🌽 Midwest', moderated: false },
+          { name: '🌍 International', moderated: false },
+          // Type tags
+          { name: '🏛️ Ivy League', moderated: false },
+          { name: '📚 Liberal Arts', moderated: false },
+          { name: '🏫 State School', moderated: false },
+          { name: '✊ HBCU', moderated: false },
+          { name: '🔬 Tech/STEM', moderated: false },
+          // Status tags
+          { name: '⚡ Early Action', moderated: false },
+          { name: '📝 Early Decision', moderated: false },
+          { name: '📋 Regular Decision', moderated: false },
+          { name: '⏳ Waitlist', moderated: false },
+        ];
+
+        // ============================================
+        // CREATE US COLLEGE APPLICATIONS FORUM
+        // ============================================
+        const usCollegeForum = await guild.channels.create({
+          name: CHANNELS.COLLEGE_APPS_US,
+          type: ChannelType.GuildForum,
+          topic: '🇺🇸 US College Applications - One post per university. Find your dream school, share stats, discuss essays, and connect with other applicants!',
+          parent: collegeCategory?.id,
+          defaultForumLayout: ForumLayoutType.List,
+          defaultSortOrder: SortOrderType.CreationDate,
+          permissionOverwrites: [
+            // @everyone: can view, can send messages in threads, but CANNOT create threads (requires approval)
+            {
+              id: guild.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessagesInThreads],
+              deny: [PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.CreatePrivateThreads],
+            },
+            // Bot can do everything
+            {
+              id: client.user.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            },
+            // Moderators can create and manage
+            ...(modRole ? [{
+              id: modRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            }] : []),
+            // Admins can create and manage
+            ...(adminRole ? [{
+              id: adminRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            }] : []),
+            // Founders can create and manage
+            ...(founderRole ? [{
+              id: founderRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            }] : []),
+          ],
+          availableTags: usCollegeTags,
+        });
+        console.log(`📋 Created US college forum: #${usCollegeForum.name}`);
+
+        // ============================================
+        // VIETNAM COLLEGE APPLICATIONS TAGS
+        // ============================================
+        const vnCollegeTags = [
+          // City tags
+          { name: '🏙️ Hà Nội', moderated: false },
+          { name: '🌆 TP.HCM', moderated: false },
+          { name: '🏖️ Đà Nẵng', moderated: false },
+          { name: '🌾 Other Cities', moderated: false },
+          // Type tags
+          { name: '🏛️ Top University', moderated: false },
+          { name: '🔬 Tech/Engineering', moderated: false },
+          { name: '💼 Business/Economics', moderated: false },
+          { name: '🩺 Medical', moderated: false },
+          { name: '🎨 Arts/Humanities', moderated: false },
+          // Status tags
+          { name: '📝 Application Open', moderated: false },
+          { name: '✅ Accepted', moderated: false },
+          { name: '⏳ Waiting', moderated: false },
+        ];
+
+        // ============================================
+        // CREATE VIETNAM COLLEGE APPLICATIONS FORUM
+        // ============================================
+        const vnCollegeForum = await guild.channels.create({
+          name: CHANNELS.COLLEGE_APPS_VN,
+          type: ChannelType.GuildForum,
+          topic: '🇻🇳 Vietnam College Applications - Dành riêng cho sinh viên Việt Nam. One post per university.',
+          parent: collegeCategory?.id,
+          defaultForumLayout: ForumLayoutType.List,
+          defaultSortOrder: SortOrderType.CreationDate,
+          permissionOverwrites: [
+            // @everyone: CANNOT view (Vietnam-only channel)
+            {
+              id: guild.id,
+              deny: [PermissionFlagsBits.ViewChannel],
+            },
+            // Vietnam role: can view, can send in threads, but CANNOT create threads
+            ...(vietnamRole ? [{
+              id: vietnamRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessagesInThreads],
+              deny: [PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.CreatePrivateThreads],
+            }] : []),
+            // Bot can do everything
+            {
+              id: client.user.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            },
+            // Moderators can create and manage
+            ...(modRole ? [{
+              id: modRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            }] : []),
+            // Admins can create and manage
+            ...(adminRole ? [{
+              id: adminRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            }] : []),
+            // Founders can create and manage
+            ...(founderRole ? [{
+              id: founderRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.SendMessagesInThreads],
+            }] : []),
+          ],
+          availableTags: vnCollegeTags,
+        });
+        console.log(`📋 Created Vietnam college forum: #${vnCollegeForum.name}`);
+
+        await interaction.editReply({
+          content: `✅ **College Forums Set Up!**\n\n` +
+            `**Created:**\n` +
+            `• <#${brainTeaserChannel.id}> - Daily brain teasers (under SAT Study)\n` +
+            `• <#${usCollegeForum.id}> - US College Applications\n` +
+            `• <#${vnCollegeForum.id}> - Vietnam College Applications (Vietnam-only)\n\n` +
+            `**How it works:**\n` +
+            `• Each university gets ONE dedicated post\n` +
+            `• Users can discuss in threads but cannot create new posts\n` +
+            `• Use \`/addcollege\` to add new universities\n` +
+            `• Users can filter by tags (Region, Type, Status)\n\n` +
+            `**US Tags:** Northeast, West Coast, South, Midwest, Ivy League, Liberal Arts, State School, HBCU, Tech/STEM\n` +
+            `**VN Tags:** Hà Nội, TP.HCM, Đà Nẵng, Top University, Tech, Business, Medical, Arts`,
+        });
+
+        console.log('✅ College forums setup complete!');
+      } catch (error) {
+        console.error('❌ Error setting up college forums:', error);
+        await interaction.editReply({ content: `❌ Error: ${error.message}` });
+      }
+    }
+
+    if (commandName === 'addcollege') {
+      await interaction.deferReply({ ephemeral: true });
+
+      try {
+        const forumType = options.getString('forum');
+        const collegeName = options.getString('name');
+        const deadline = options.getString('deadline');
+        const avgSat = options.getString('avg_sat');
+        const avgGpa = options.getString('avg_gpa');
+        const link = options.getString('link');
+
+        const guild = interaction.guild;
+        const channels = await guild.channels.fetch();
+
+        // Find the appropriate forum channel
+        const channelName = forumType === 'us' ? CHANNELS.COLLEGE_APPS_US : CHANNELS.COLLEGE_APPS_VN;
+        const forumChannel = channels.find(c => c.name === channelName && c.type === ChannelType.GuildForum);
+
+        if (!forumChannel) {
+          return interaction.editReply({ content: `❌ Forum channel \`#${channelName}\` not found. Run \`/setupcollegeforums\` first.` });
+        }
+
+        // Check if a thread for this college already exists
+        const existingThreads = await forumChannel.threads.fetchActive();
+        const existingThread = existingThreads.threads.find(t => t.name.toLowerCase() === collegeName.toLowerCase());
+        if (existingThread) {
+          return interaction.editReply({ content: `❌ A post for **${collegeName}** already exists: <#${existingThread.id}>` });
+        }
+
+        // Build the wiki/info embed
+        const wikiEmbed = new EmbedBuilder()
+          .setColor(forumType === 'us' ? '#3498DB' : '#E74C3C')
+          .setTitle(`📚 ${collegeName}`)
+          .setDescription(`Welcome to the **${collegeName}** discussion thread!\n\nShare your stats, discuss essays, ask questions, and connect with other applicants.`)
+          .setTimestamp();
+
+        // Add fields based on provided info
+        const fields = [];
+        if (deadline) fields.push({ name: '📅 Application Deadline', value: deadline, inline: true });
+        if (avgSat) fields.push({ name: '📊 Average SAT', value: avgSat, inline: true });
+        if (avgGpa) fields.push({ name: '📈 Average GPA', value: avgGpa, inline: true });
+        if (link) fields.push({ name: '🔗 Application Info', value: `[View Requirements](${link})`, inline: false });
+
+        fields.push({
+          name: '💡 Discussion Guidelines',
+          value: '• Be respectful and supportive\n• Share your stats and experiences\n• Ask questions about essays and requirements\n• Celebrate acceptances and support rejections\n• No sharing of confidential application materials',
+          inline: false
+        });
+
+        wikiEmbed.addFields(fields);
+        wikiEmbed.setFooter({ text: `Created by ${interaction.user.tag} • Follow this post to get notified of new discussions` });
+
+        // Create the thread/post
+        const collegeThread = await forumChannel.threads.create({
+          name: collegeName,
+          message: {
+            embeds: [wikiEmbed],
+          },
+          appliedTags: [], // Moderators can add tags manually
+        });
+
+        await interaction.editReply({
+          content: `✅ **College post created!**\n\n` +
+            `**${collegeName}** has been added to <#${forumChannel.id}>\n` +
+            `Direct link: <#${collegeThread.id}>\n\n` +
+            `*Tip: Add relevant tags (Region, Type, Status) by editing the post.*`,
+        });
+
+        console.log(`🏫 Created college post: ${collegeName} in ${channelName}`);
+      } catch (error) {
+        console.error('❌ Error adding college:', error);
+        await interaction.editReply({ content: `❌ Error: ${error.message}` });
+      }
+    }
   }
-  
+
   if (interaction.isButton()) {
     // Escalation buttons
     if (interaction.customId.startsWith('claim_escalation_')) {

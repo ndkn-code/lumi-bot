@@ -2,7 +2,7 @@
 
 > **This file is the source of truth for the Discord server structure.**
 > When making changes, update this file AND the bot code accordingly.
-> **Last synced:** January 2026 | **Bot version:** 4.3
+> **Last synced:** January 2026 | **Bot version:** 4.5
 
 ---
 
@@ -13,7 +13,7 @@
 | Server Name | Lumist.ai |
 | Server ID | `1456886174600794291` |
 | Bot Name | Lumi |
-| Bot Version | 4.3 |
+| Bot Version | 4.5 |
 
 ---
 
@@ -85,14 +85,18 @@ Assigned via Discord's native onboarding.
 
 ### Required Channels (Bot References These)
 
-| Channel Name | Constant | Purpose | Bot Uses |
-|--------------|----------|---------|----------|
-| `introductions` | `CHANNELS.INTRODUCTIONS` | Welcome posts | ✅ Posts welcome message |
-| `welcome` | `CHANNELS.WELCOME` | Fallback onboarding | ✅ Sends button if DM fails |
-| `rules` | `CHANNELS.RULES` | Server rules | ❌ Referenced only |
-| `mod-logs` | `CHANNELS.MOD_LOGS` | Mod actions + escalations | ✅ Logs all mod actions |
-| `support-tickets` | `CHANNELS.SUPPORT_TICKETS` | Ticket creation | ✅ Ticket panel |
-| `ask-lumi` | `CHANNELS.ASK_LUMI` | AI chatbot channel | ✅ Responds to all messages |
+| Channel Name | Type | Constant | Purpose | Bot Uses |
+|--------------|------|----------|---------|----------|
+| `introductions` | Text | `CHANNELS.INTRODUCTIONS` | Welcome posts | ✅ Posts welcome message |
+| `welcome` | Text | `CHANNELS.WELCOME` | Fallback onboarding | ✅ Sends button if DM fails |
+| `rules` | Text | `CHANNELS.RULES` | Server rules | ❌ Referenced only |
+| `mod-logs` | Text | `CHANNELS.MOD_LOGS` | Mod actions + escalations | ✅ Logs all mod actions |
+| `support-tickets` | Text | `CHANNELS.SUPPORT_TICKETS` | Ticket creation | ✅ Ticket panel |
+| `ask-lumi` | Text | `CHANNELS.ASK_LUMI` | AI chatbot channel | ✅ Responds to all messages |
+| `verify` | **Forum** | `CHANNELS.VERIFY` | Account verification | ✅ Creates forum posts |
+| `brain-teaser` | Text | `CHANNELS.BRAIN_TEASER` | Daily brain teasers | ✅ Posts questions |
+| `us-college-apps` | **Forum** | `CHANNELS.COLLEGE_APPS_US` | US college discussions | ✅ Creates college posts |
+| `vietnam-college-apps` | **Forum** | `CHANNELS.COLLEGE_APPS_VN` | VN college discussions (VN-only) | ✅ Creates college posts |
 
 ### Recommended Additional Channels
 
@@ -235,7 +239,181 @@ Warnings expire after **30 days**.
 | Command | Description | Permission |
 |---------|-------------|------------|
 | `/setuptickets` | Create ticket panel in channel | Administrator |
+| `/setupverify` | Create/recreate #verify forum channel with pinned posts | Administrator |
+| `/setupcollegeforums` | Create brain-teaser channel and college forum channels | Administrator |
+| `/addcollege` | Add a new university post to a college forum | Moderate Members |
 | `/close` | Close current ticket channel | Manage Channels |
+
+---
+
+## Verification System (Forum Channel)
+
+The `#verify` channel is a **Forum Channel** with two pinned posts for verification.
+
+### Forum Structure
+
+| Post Name | Tag | Purpose |
+|-----------|-----|---------|
+| ✅ Lumist.ai Account Verification | ✅ Lumist.ai | Link Lumist.ai account |
+| 🎓 Alumni Verification | 🎓 Alumni | Verify college enrollment |
+
+### Permissions
+
+| Role | Can View | Can Create Posts | Can Reply |
+|------|----------|------------------|-----------|
+| @everyone | ✅ Yes | ❌ No | ❌ No |
+| 🛡️ Moderator | ✅ Yes | ✅ Yes | ✅ Yes |
+| ⚙️ Admin | ✅ Yes | ✅ Yes | ✅ Yes |
+| 👑 Founder | ✅ Yes | ✅ Yes | ✅ Yes |
+| 🤖 Lumi (Bot) | ✅ Yes | ✅ Yes | ✅ Yes |
+
+### Verification Flow
+
+**Lumist.ai Verification:**
+```
+User clicks "✅ Verify Lumist.ai Account" button
+       ↓
+Ephemeral message with verification link appears
+       ↓
+User completes verification on lumist.ai
+       ↓
+User receives ✅ Verified role
+       ↓
+If Premium user: also receives 💎 Premium role
+```
+
+**Alumni Verification:**
+```
+User clicks "🎓 Apply for Alumni Verification" button
+       ↓
+Private ticket channel created
+       ↓
+User submits proof of enrollment:
+  - Student ID photo
+  - Acceptance letter
+  - .edu email screenshot
+       ↓
+Moderator reviews and grants 🎓 Alumni role
+       ↓
+Ticket closed
+```
+
+### Setup Command
+
+Run `/setupverify` to:
+1. Delete existing `#verify` channel (if exists)
+2. Create new Forum channel named `verify`
+3. Set permissions (users can view but not create posts)
+4. Create and pin both verification posts
+5. Add tags: `✅ Lumist.ai` and `🎓 Alumni`
+
+---
+
+## Brain Teaser Channel
+
+The `#brain-teaser` channel under SAT STUDY is for daily brain teasers from Lumist.ai.
+
+| Property | Value |
+|----------|-------|
+| Type | Text Channel |
+| Category | SAT STUDY |
+| User Permissions | View only (cannot send messages) |
+| Bot/Mod Permissions | Can send messages |
+
+---
+
+## College Application Forums
+
+Two forum channels for college application discussions. Each university gets ONE dedicated post.
+
+### US College Applications (`#us-college-apps`)
+
+| Property | Value |
+|----------|-------|
+| Type | Forum Channel |
+| Category | COLLEGE & BEYOND |
+| Visibility | Everyone |
+| User Permissions | Can view, can discuss in threads, **cannot** create new posts |
+| Mod Permissions | Can create posts, manage threads |
+
+**Available Tags (US):**
+
+| Category | Tags |
+|----------|------|
+| Region | 🌲 Northeast, ☀️ West Coast, 🤠 South, 🌽 Midwest, 🌍 International |
+| Type | 🏛️ Ivy League, 📚 Liberal Arts, 🏫 State School, ✊ HBCU, 🔬 Tech/STEM |
+| Status | ⚡ Early Action, 📝 Early Decision, 📋 Regular Decision, ⏳ Waitlist |
+
+### Vietnam College Applications (`#vietnam-college-apps`)
+
+| Property | Value |
+|----------|-------|
+| Type | Forum Channel |
+| Category | COLLEGE & BEYOND |
+| Visibility | **Vietnam role only** |
+| User Permissions | Can view, can discuss in threads, **cannot** create new posts |
+| Mod Permissions | Can create posts, manage threads |
+
+**Available Tags (Vietnam):**
+
+| Category | Tags |
+|----------|------|
+| City | 🏙️ Hà Nội, 🌆 TP.HCM, 🏖️ Đà Nẵng, 🌾 Other Cities |
+| Type | 🏛️ Top University, 🔬 Tech/Engineering, 💼 Business/Economics, 🩺 Medical, 🎨 Arts/Humanities |
+| Status | 📝 Application Open, ✅ Accepted, ⏳ Waiting |
+
+### How College Forums Work
+
+```
+User Discovery:
+1. User opens #us-college-apps or #vietnam-college-apps
+2. Filters by tags (e.g., [Ivy League] or [Hà Nội])
+3. Searches for specific school (e.g., "Georgia Tech")
+4. Clicks into existing post OR requests new post from mods
+
+University Post Structure:
+┌─────────────────────────────────────────┐
+│ 📚 Stanford University                  │
+├─────────────────────────────────────────┤
+│ 📅 Application Deadline: Jan 2, 2026    │
+│ 📊 Average SAT: 1500-1570               │
+│ 📈 Average GPA: 3.9-4.0                 │
+│ 🔗 [View Requirements](link)            │
+├─────────────────────────────────────────┤
+│ 💡 Discussion Guidelines                │
+│ • Be respectful and supportive          │
+│ • Share your stats and experiences      │
+│ • Ask questions about essays            │
+│ • Celebrate acceptances                 │
+└─────────────────────────────────────────┘
+
+Users discuss in thread below ↓
+```
+
+### Adding New Universities
+
+Moderators use `/addcollege` to add new university posts:
+
+```
+/addcollege forum:US College Apps name:Stanford University deadline:Jan 2, 2026 avg_sat:1500-1570 avg_gpa:3.9-4.0 link:https://...
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `forum` | ✅ | US College Apps or Vietnam College Apps |
+| `name` | ✅ | University name (becomes post title) |
+| `deadline` | ❌ | Application deadline |
+| `avg_sat` | ❌ | Average SAT score range |
+| `avg_gpa` | ❌ | Average GPA range |
+| `link` | ❌ | Link to application requirements |
+
+### Setup Command
+
+Run `/setupcollegeforums` to:
+1. Create/recreate `#brain-teaser` channel (under SAT STUDY)
+2. Create/recreate `#us-college-apps` forum (public)
+3. Create/recreate `#vietnam-college-apps` forum (Vietnam-only)
+4. Set all permissions and tags
 
 ---
 
@@ -358,6 +536,8 @@ Users can interact with Lumi AI in these ways:
 
 | Date | Change | By |
 |------|--------|-----|
+| 2026-01-19 | v4.5: Added brain-teaser channel, US/Vietnam college application forums | Claude |
+| 2026-01-19 | v4.4: Changed #verify to Forum channel with pinned posts | Claude |
 | 2026-01-19 | v4.3: Migrated to Discord native onboarding | Claude |
 | 2026-01-19 | Expanded nationality options to ~40 countries | Claude |
 | 2026-01-19 | Added interests prompt (SAT Math, Reading, College Apps) | Claude |
