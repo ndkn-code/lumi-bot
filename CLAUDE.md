@@ -1,6 +1,6 @@
 # Lumist Discord Bot - Development Guide
 
-> **Version:** 4.5
+> **Version:** 4.6
 > **Last synced:** January 2026
 
 ## Project Overview
@@ -302,6 +302,25 @@ Adds a new university post to a college forum.
 ```
 /addcollege forum:US College Apps name:Stanford University deadline:Jan 2, 2026 avg_sat:1500-1570
 ```
+
+**`/populatevncolleges`** (Admin)
+Bulk-creates posts for Vietnam universities that accept SAT scores.
+
+```
+/populatevncolleges clear:True
+```
+
+Options:
+- `clear` (optional): Set to `True` to delete all existing posts before creating new ones
+
+This command creates posts for 25+ universities in Hanoi and Ho Chi Minh City, including:
+- **Hanoi:** NEU, HUST, FTU, BFAV, AOF, TMU, DAV, HANU, NUCE, VNU schools, HMU, MMA
+- **HCMC:** UEH, HCMUT, UMP, UEL, TDTU, BUH, HIU, OU-HCMC, HCMUARC
+- **Multi-campus:** FTU, PTIT, RMIT (both cities)
+
+Each post is automatically tagged with:
+- City tags (🏙️ Hà Nội, 🌆 TP.HCM, or both)
+- Type tags (💼 Business, 🔬 Tech, 🩺 Medical, 🎨 Arts, 🏛️ Top University)
 
 ### Tags
 

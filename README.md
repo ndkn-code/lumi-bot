@@ -1,13 +1,15 @@
 # Lumist.ai Discord Bot
 
-Discord bot v4.3 for the Lumist.ai community. Full-featured community management with native Discord onboarding, moderation, AI chatbot, ticketing, verification, and analytics.
+Discord bot v4.6 for the Lumist.ai community. Full-featured community management with native Discord onboarding, moderation, AI chatbot, ticketing, verification, college forums, and analytics.
 
 ## Features
 
 ### Core
 - 🎉 **Native Discord Onboarding** - Polished onboarding UI with country/grade selection and interest-based channel access
 - 👋 **Smart Welcome** - Personalized welcome in #introductions with quick links when onboarding completes
-- ✅ **Verification System** - FAQ-style #verify channel with Lumist.ai account linking and Alumni verification
+- ✅ **Verification System** - Forum-based #verify channel with Lumist.ai account linking and Alumni verification
+- 🎓 **College Application Forums** - US and Vietnam college discussion forums with tagging system
+- 🧠 **Brain Teaser Channel** - Daily SAT-style questions from Lumist.ai
 
 ### Moderation
 - 🛡️ **Auto-Moderation** - Spam detection, mention spam, duplicate messages, link filtering, banned words
@@ -156,7 +158,10 @@ The bot exposes an HTTP server for health checks and escalation webhooks:
 | `/purge <amount> [user]` | Delete messages | Manage Messages |
 | `/stats` | Server statistics | Manage Guild |
 | `/setuptickets` | Setup ticket system | Admin |
-| `/setupverify` | Setup verification posts in #verify | Admin |
+| `/setupverify` | Setup verification forum in #verify | Admin |
+| `/setupcollegeforums` | Setup college forums and brain-teaser channel | Admin |
+| `/addcollege` | Add a university post to college forum | Moderator |
+| `/populatevncolleges` | Bulk-create Vietnam university posts | Admin |
 | `/close` | Close current ticket | Manage Channels |
 
 ## License
