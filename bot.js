@@ -888,7 +888,7 @@ const commands = [
   new SlashCommandBuilder().setName('setupverify').setDescription('Setup verification forum channel with pinned posts').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('setupcollegeforums').setDescription('Setup US and Vietnam college application forum channels').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('addcollege').setDescription('Add a new college post to a college forum').addStringOption(o => o.setName('forum').setDescription('Which forum').setRequired(true).addChoices({ name: 'US College Apps', value: 'us' }, { name: 'Vietnam College Apps', value: 'vn' })).addStringOption(o => o.setName('name').setDescription('College name (e.g., Stanford University)').setRequired(true)).addStringOption(o => o.setName('deadline').setDescription('Application deadline (e.g., Jan 1, 2026)')).addStringOption(o => o.setName('avg_sat').setDescription('Average SAT score (e.g., 1500-1570)')).addStringOption(o => o.setName('avg_gpa').setDescription('Average GPA (e.g., 3.9-4.0)')).addStringOption(o => o.setName('link').setDescription('Link to application requirements')).setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
-  new SlashCommandBuilder().setName('populatevncolleges').setDescription('Bulk add Vietnam universities that accept SAT to the VN forum').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('populatevncolleges').setDescription('Bulk add Vietnam universities that accept SAT to the VN forum').addBooleanOption(o => o.setName('clear').setDescription('Delete all existing posts first before populating')).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -1885,11 +1885,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
       try {
         const guild = interaction.guild;
         const channels = await guild.channels.fetch();
+        const shouldClear = options.getBoolean('clear') || false;
 
         // Find the Vietnam college forum
         const forumChannel = channels.find(c => c.name === CHANNELS.COLLEGE_APPS_VN && c.type === ChannelType.GuildForum);
         if (!forumChannel) {
           return interaction.editReply({ content: `❌ Forum channel \`#${CHANNELS.COLLEGE_APPS_VN}\` not found. Run \`/setupcollegeforums\` first.` });
+        }
+
+        // If clear option is set, delete all existing posts first
+        if (shouldClear) {
+          await interaction.editReply({ content: `🗑️ Clearing existing posts in #${CHANNELS.COLLEGE_APPS_VN}...` });
+
+          const activeThreads = await forumChannel.threads.fetchActive();
+          const archivedThreads = await forumChannel.threads.fetchArchived();
+          const allThreads = [...activeThreads.threads.values(), ...archivedThreads.threads.values()];
+
+          let deleted = 0;
+          for (const thread of allThreads) {
+            try {
+              await thread.delete();
+              deleted++;
+              await new Promise(resolve => setTimeout(resolve, 500)); // Rate limit
+            } catch (err) {
+              console.error(`Failed to delete thread ${thread.name}:`, err.message);
+            }
+          }
+
+          await interaction.editReply({ content: `🗑️ Deleted ${deleted} existing posts. Now creating new posts...` });
         }
 
         // Vietnam universities that accept SAT - Hanoi and Ho Chi Minh focus
