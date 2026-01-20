@@ -1968,6 +1968,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const availableTags = forumChannel.availableTags;
         const tagMap = new Map(availableTags.map(t => [t.name, t.id]));
 
+        // Debug: Log available tags
+        console.log('📋 Available forum tags:', availableTags.map(t => t.name));
+
         await interaction.editReply({ content: `🔄 Starting population of Vietnam colleges... (0/${vnUniversities.length})` });
 
         for (const uni of vnUniversities) {
@@ -1985,6 +1988,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .map(tagName => tagMap.get(tagName))
             .filter(id => id !== undefined)
             .slice(0, 5);
+
+          // Debug: Log tag mapping for multi-campus universities
+          if (uni.tags.length > 3) {
+            const mapped = uni.tags.map(t => ({ tag: t, found: tagMap.has(t) }));
+            console.log(`🏷️ ${uni.code} tags: requested=${uni.tags.length}, applied=${appliedTagIds.length}`, mapped);
+          }
 
           // Build the wiki embed
           const wikiEmbed = new EmbedBuilder()
@@ -2006,7 +2015,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               appliedTags: appliedTagIds,
             });
             created++;
-            results.push(`✅ Created: ${postName} [${uni.tags.length} tags]`);
+            results.push(`✅ Created: ${postName} [${appliedTagIds.length}/${uni.tags.length} tags applied]`);
 
             // Rate limit: wait a bit between creates
             await new Promise(resolve => setTimeout(resolve, 1000));
