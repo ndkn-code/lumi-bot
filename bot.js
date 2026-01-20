@@ -1894,15 +1894,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // Vietnam universities that accept SAT - Hanoi and Ho Chi Minh focus
         const vnUniversities = [
-          // Hanoi
-          { code: 'FTU', name: 'Đại Học Ngoại Thương', city: 'Hà Nội' },
+          // Hanoi-only universities
           { code: 'NEU', name: 'Đại Học Kinh Tế Quốc Dân', city: 'Hà Nội' },
           { code: 'HUST', name: 'Đại Học Bách Khoa Hà Nội', city: 'Hà Nội' },
           { code: 'TMU', name: 'Đại Học Thương Mại', city: 'Hà Nội' },
           { code: 'DAV', name: 'Học Viện Ngoại Giao', city: 'Hà Nội' },
           { code: 'BFAV', name: 'Học Viện Ngân Hàng', city: 'Hà Nội' },
           { code: 'AOF', name: 'Học Viện Tài Chính', city: 'Hà Nội' },
-          { code: 'PTIT', name: 'Học Viện Công Nghệ Bưu Chính Viễn Thông', city: 'Hà Nội' },
           { code: 'HANU', name: 'Đại Học Hà Nội', city: 'Hà Nội' },
           { code: 'NUCE', name: 'Đại Học Xây Dựng Hà Nội', city: 'Hà Nội' },
           // VNU Hanoi
@@ -1911,19 +1909,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
           { code: 'VNU-IS', name: 'Khoa Quốc Tế - ĐHQGHN', city: 'Hà Nội' },
           { code: 'VNU-SB', name: 'Khoa Quản Trị Kinh Doanh - ĐHQGHN', city: 'Hà Nội' },
           { code: 'VJU', name: 'Đại Học Việt Nhật - ĐHQGHN', city: 'Hà Nội' },
-          // Medical/Military
-          { code: 'HUP', name: 'Đại Học Y Hà Nội', city: 'Hà Nội' },
-          { code: 'MSA', name: 'Học Viện Quân Y', city: 'Hà Nội' },
-          // Ho Chi Minh City
-          { code: 'HCMUARC', name: 'Đại Học Kiến Trúc TP.HCM', city: 'TP.HCM' },
+          // Medical/Military (Hanoi)
+          { code: 'HMU', name: 'Đại Học Y Hà Nội', city: 'Hà Nội' },
+          { code: 'MMA', name: 'Học Viện Quân Y', city: 'Hà Nội' },
+          // Multi-campus universities (Hà Nội & TP.HCM)
+          { code: 'FTU', name: 'Đại Học Ngoại Thương', city: 'Hà Nội & TP.HCM' },
+          { code: 'PTIT', name: 'Học Viện Công Nghệ Bưu Chính Viễn Thông', city: 'Hà Nội & TP.HCM' },
+          { code: 'RMIT-VN', name: 'RMIT Vietnam', city: 'TP.HCM & Hà Nội' },
+          // Ho Chi Minh City-only universities
           { code: 'UEH', name: 'Đại Học Kinh Tế TP.HCM', city: 'TP.HCM' },
-          { code: 'UMP', name: 'Đại Học Y Dược TP.HCM', city: 'TP.HCM' },
           { code: 'HCMUT', name: 'Đại Học Bách Khoa TP.HCM', city: 'TP.HCM' },
-          { code: 'UEL', name: 'Đại Học Kinh Tế - Luật', city: 'TP.HCM' },
+          { code: 'UMP', name: 'Đại Học Y Dược TP.HCM', city: 'TP.HCM' },
+          { code: 'UEL', name: 'Đại Học Kinh Tế - Luật TP.HCM', city: 'TP.HCM' },
+          { code: 'HCMUARC', name: 'Đại Học Kiến Trúc TP.HCM', city: 'TP.HCM' },
           { code: 'OU-HCMC', name: 'Đại Học Mở TP.HCM', city: 'TP.HCM' },
+          { code: 'BUH', name: 'Đại Học Ngân Hàng TP.HCM', city: 'TP.HCM' },
           { code: 'HIU', name: 'Đại Học Quốc Tế Hồng Bàng', city: 'TP.HCM' },
           { code: 'TDTU', name: 'Đại Học Tôn Đức Thắng', city: 'TP.HCM' },
-          { code: 'GW-VN', name: 'George Washington University Vietnam', city: 'TP.HCM' },
         ];
 
         // Get existing threads to avoid duplicates
