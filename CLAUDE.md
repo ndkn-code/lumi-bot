@@ -393,16 +393,21 @@ When making changes, always provide:
 
 ## Deployment
 
-- **Hosting**: Render (auto-deploys from GitHub main branch)
+- **Hosting**: GCP (Google Cloud Platform)
 - **Database**: Supabase (`social_analytics` schema)
 - **AI/Escalation**: n8n workflows
-- **Process Manager**: PM2 (on local/VPS deployments)
+- **Process Manager**: PM2
+- **SSH Alias**: `lumist-gcp`
 
 ### Server Operations
 
-The bot can be managed using PM2. Common commands:
+The bot runs on GCP and is managed using PM2.
 
 ```bash
+# SSH into the server
+ssh lumist-gcp
+
+# PM2 commands (run on the server)
 pm2 status lumi-bot      # Check bot status
 pm2 logs lumi-bot        # View logs
 pm2 restart lumi-bot     # Restart the bot
@@ -410,50 +415,25 @@ pm2 stop lumi-bot        # Stop the bot
 pm2 start bot.js --name lumi-bot  # Start the bot
 ```
 
-### Update Script (~/lumi-bot/update.sh)
+### Deploying Updates
 
-Use this script to pull latest changes and restart the bot:
+SSH into the server and run the update script:
 
 ```bash
-#!/bin/bash
-# Lumi Bot - Auto Update Script
-
-echo "🔄 Starting update process..."
-echo "📅 $(date)"
-
-# Navigate to bot directory
-cd ~/lumi-bot || { echo "❌ Bot directory not found!"; exit 1; }
-
-# Pull latest changes
-echo "📥 Pulling from GitHub..."
-git pull origin main
-
-if [ $? -ne 0 ]; then
-    echo "❌ Git pull failed!"
-    exit 1
-fi
-
-# Install any new dependencies
-echo "📦 Installing dependencies..."
-npm install
-
-# Restart the bot
-echo "🔄 Restarting bot..."
-pm2 restart lumi-bot
-
-sleep 3
-
-echo "✅ Update complete!"
-pm2 status lumi-bot
-pm2 logs lumi-bot --lines 10 --nostream
+ssh lumist-gcp
+cd ~/lumi-bot && git pull origin main && npm install && pm2 restart lumi-bot
 ```
 
-Run with: `bash ~/lumi-bot/update.sh`
+Or use the update script:
+
+```bash
+ssh lumist-gcp 'bash ~/lumi-bot/update.sh'
+```
 
 ### Health Check
 
 ```
-GET https://lumist-discord-bot.onrender.com/health
+GET http://<server-ip>:3000/health
 
 Response:
 {
