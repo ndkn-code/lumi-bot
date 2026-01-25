@@ -889,6 +889,7 @@ const commands = [
   new SlashCommandBuilder().setName('setupcollegeforums').setDescription('Setup US and Vietnam college application forum channels').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('addcollege').setDescription('Add a new college post to a college forum').addStringOption(o => o.setName('forum').setDescription('Which forum').setRequired(true).addChoices({ name: 'US College Apps', value: 'us' }, { name: 'Vietnam College Apps', value: 'vn' })).addStringOption(o => o.setName('name').setDescription('College name (e.g., Stanford University)').setRequired(true)).addStringOption(o => o.setName('deadline').setDescription('Application deadline (e.g., Jan 1, 2026)')).addStringOption(o => o.setName('avg_sat').setDescription('Average SAT score (e.g., 1500-1570)')).addStringOption(o => o.setName('avg_gpa').setDescription('Average GPA (e.g., 3.9-4.0)')).addStringOption(o => o.setName('link').setDescription('Link to application requirements')).setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
   new SlashCommandBuilder().setName('populatevncolleges').setDescription('Bulk add Vietnam universities that accept SAT to the VN forum').addBooleanOption(o => o.setName('clear').setDescription('Delete all existing posts first before populating')).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('setupverifybutton').setDescription('Send a Lumist.ai verification button to current channel').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -1400,6 +1401,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({ content: '✅ Ticket system set up!', ephemeral: true });
     }
 
+    if (commandName === 'setupverifybutton') {
+      // Send a verification button message to the current channel
+      const verifyEmbed = new EmbedBuilder()
+        .setColor('#5865F2')
+        .setTitle('🔗 Link your Lumist.ai Account')
+        .setDescription(
+          'Connect your Discord account with Lumist.ai to:\n\n' +
+          '✅ Get the **Verified** role\n' +
+          '💎 Get **Premium** role (if you have a subscription)\n' +
+          '🔔 Receive updates and exclusive perks\n\n' +
+          'Click the button below to get started!'
+        )
+        .setFooter({ text: 'lumist.ai • SAT Prep Platform' });
+
+      const verifyRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('verify_lumist')
+          .setLabel('Verify Account')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('🔗')
+      );
+
+      await interaction.channel.send({
+        embeds: [verifyEmbed],
+        components: [verifyRow],
+      });
+
+      await interaction.reply({ content: '✅ Verification button created!', ephemeral: true });
+    }
+
     if (commandName === 'setupverify') {
       await interaction.deferReply({ ephemeral: true });
 
@@ -1487,7 +1518,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .setCustomId('verify_lumist')
             .setLabel('Verify Lumist.ai Account')
             .setStyle(ButtonStyle.Primary)
-            .setEmoji('✅')
+            // .setEmoji('✅')
         );
 
         const lumistThread = await forumChannel.threads.create({
@@ -2079,11 +2110,46 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // Verification buttons
     if (interaction.customId === 'verify_lumist') {
-      // TODO: Configure actual verification link
-      const verifyLink = process.env.LUMIST_VERIFY_URL || 'https://lumist.ai/discord-verify';
+      const discordUser = interaction.user;
+      const crypto = require('crypto');
+
+      // Generate OAuth URL with state containing interaction token for ephemeral message edit
+      const state = Buffer.from(JSON.stringify({
+        csrf: crypto.randomUUID(),
+        source: 'button',
+        interactionToken: interaction.token,
+        discordId: discordUser.id,
+      })).toString('base64url');
+
+      const clientId = process.env.DISCORD_CLIENT_ID;
+      const redirectUri = process.env.LUMIST_REDIRECT_URI || 'https://app.lumist.ai/api/auth/discord/callback';
+
+      const oauthUrl = new URL('https://discord.com/api/oauth2/authorize');
+      oauthUrl.searchParams.set('client_id', clientId);
+      oauthUrl.searchParams.set('redirect_uri', redirectUri);
+      oauthUrl.searchParams.set('response_type', 'code');
+      oauthUrl.searchParams.set('scope', 'identify');
+      oauthUrl.searchParams.set('state', state);
+
+      // Reply with ephemeral message containing OAuth link button
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setStyle(ButtonStyle.Link)
+          .setLabel('Connect with Lumist.ai')
+          .setURL(oauthUrl.toString())
+      );
+
       await interaction.reply({
-        content: `✅ **Lumist.ai Verification**\n\nClick the link below to verify your account:\n${verifyLink}\n\nAfter verifying on the website, you'll automatically receive the ✅ Verified role!`,
-        ephemeral: true
+        embeds: [{
+          color: 0x5865f2,
+          title: 'Link your Lumist.ai account',
+          description:
+            `✅ **Lumist.ai Verification**\n\nClick the button below to verify your account\n\nAfter verifying on the website, you'll automatically receive the ✅ Verified role!` +
+            "**This message will update once you've completed verification!**",
+          footer: { text: 'This message is only visible to you' },
+        }],
+        components: [row],
+        ephemeral: true,
       });
     }
 
