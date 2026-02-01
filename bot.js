@@ -303,13 +303,14 @@ const server = http.createServer(async (req, res) => {
       const applicationId = process.env.DISCORD_CLIENT_ID;
 
       // Build role status lines based on actual assignment results
+      // Use === false check for backward compatibility (undefined means old web app, treat as success)
       const verifiedStatus = verifiedAssigned !== false
         ? '✅ You have the **Verified** role'
         : '⚠️ Verified role assignment failed';
       const premiumStatus = isPremium
-        ? (premiumAssigned ? '💎 You have the **Premium** role' : '⚠️ Premium role assignment failed')
+        ? (premiumAssigned !== false ? '💎 You have the **Premium** role' : '⚠️ Premium role assignment failed')
         : '';
-      const hasRoleFailure = verifiedAssigned === false || (isPremium && !premiumAssigned);
+      const hasRoleFailure = verifiedAssigned === false || (isPremium && premiumAssigned === false);
 
       await rest.patch(
         `/webhooks/${applicationId}/${pending.token}/messages/@original`,
