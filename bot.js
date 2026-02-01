@@ -182,6 +182,11 @@ const CHATBOT_COOLDOWN_MS = 2000;
 const escalationThreads = new Map();
 const escalationMessages = new Map();
 
+// Verification token storage (for ephemeral message updates)
+// Map<shortId, { token: string, discordId: string, expiresAt: number }>
+const pendingVerifications = new Map();
+const VERIFICATION_TOKEN_EXPIRY = 15 * 60 * 1000; // 15 minutes (Discord token lifetime)
+
 // ============================================
 // HTTP SERVER (Health Check + Escalation)
 // ============================================
@@ -253,6 +258,87 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(result));
     } catch (error) {
       console.error('❌ Escalation update error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: error.message }));
+    }
+    return;
+  }
+
+  // Verification complete endpoint - called by web app after successful link
+  if (req.url?.startsWith('/verify/complete') && req.method === 'POST') {
+    try {
+      const data = await parseBody();
+      const { tokenId, isPremium, discordId, verifiedAssigned, premiumAssigned } = data;
+
+      if (!tokenId || !discordId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Missing tokenId or discordId' }));
+        return;
+      }
+
+      const pending = pendingVerifications.get(tokenId);
+      if (!pending) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Token not found or expired' }));
+        return;
+      }
+
+      // Verify discordId matches
+      if (pending.discordId !== discordId) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Discord ID mismatch' }));
+        return;
+      }
+
+      // Check expiry
+      if (Date.now() > pending.expiresAt) {
+        pendingVerifications.delete(tokenId);
+        res.writeHead(410, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Token expired' }));
+        return;
+      }
+
+      // Edit the ephemeral message
+      const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+      const applicationId = process.env.DISCORD_CLIENT_ID;
+
+      // Build role status lines based on actual assignment results
+      const verifiedStatus = verifiedAssigned !== false
+        ? '✅ You have the **Verified** role'
+        : '⚠️ Verified role assignment failed';
+      const premiumStatus = isPremium
+        ? (premiumAssigned ? '💎 You have the **Premium** role' : '⚠️ Premium role assignment failed')
+        : '';
+      const hasRoleFailure = verifiedAssigned === false || (isPremium && !premiumAssigned);
+
+      await rest.patch(
+        `/webhooks/${applicationId}/${pending.token}/messages/@original`,
+        {
+          body: {
+            embeds: [{
+              color: hasRoleFailure ? 0xf59e0b : 0x22c55e, // Orange if any failure, green if all success
+              title: hasRoleFailure ? '⚠️ Account Linked (with issues)' : '✅ Account Verified!',
+              description:
+                'Your Discord is now linked to Lumist.ai!\n\n' +
+                verifiedStatus + '\n' +
+                (premiumStatus ? premiumStatus + '\n' : '') +
+                (hasRoleFailure ? '\n*Please contact support if roles are missing.*' : '\nWelcome to the Lumist community!'),
+              footer: { text: 'lumist.ai' },
+              timestamp: new Date().toISOString(),
+            }],
+            components: [], // Remove the link button
+          },
+        }
+      );
+
+      // Clean up
+      pendingVerifications.delete(tokenId);
+
+      console.log(`✅ Updated ephemeral message for ${discordId}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (error) {
+      console.error('❌ Verify complete error:', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: error.message }));
     }
@@ -889,15 +975,19 @@ const commands = [
   new SlashCommandBuilder().setName('setupcollegeforums').setDescription('Setup US and Vietnam college application forum channels').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('addcollege').setDescription('Add a new college post to a college forum').addStringOption(o => o.setName('forum').setDescription('Which forum').setRequired(true).addChoices({ name: 'US College Apps', value: 'us' }, { name: 'Vietnam College Apps', value: 'vn' })).addStringOption(o => o.setName('name').setDescription('College name (e.g., Stanford University)').setRequired(true)).addStringOption(o => o.setName('deadline').setDescription('Application deadline (e.g., Jan 1, 2026)')).addStringOption(o => o.setName('avg_sat').setDescription('Average SAT score (e.g., 1500-1570)')).addStringOption(o => o.setName('avg_gpa').setDescription('Average GPA (e.g., 3.9-4.0)')).addStringOption(o => o.setName('link').setDescription('Link to application requirements')).setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
   new SlashCommandBuilder().setName('populatevncolleges').setDescription('Bulk add Vietnam universities that accept SAT to the VN forum').addBooleanOption(o => o.setName('clear').setDescription('Delete all existing posts first before populating')).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName('setupverifybutton').setDescription('Send a Lumist.ai verification button to current channel').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('setupverifybutton').setDescription('Send a Lumist.ai verification button to current channel'),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
   try {
     console.log('📝 Registering slash commands...');
-    await rest.put(Routes.applicationGuildCommands(client.user.id, GUILD_ID), { body: commands });
+    console.log('   Bot ID:', client.user.id);
+    console.log('   Guild ID:', GUILD_ID);
+    console.log('   Commands count:', commands.length);
+    const result = await rest.put(Routes.applicationGuildCommands(client.user.id, GUILD_ID), { body: commands });
     console.log('✅ Slash commands registered!');
+    console.log('   Registered commands:', result.map(c => c.name).join(', '));
   } catch (error) {
     console.error('❌ Error registering commands:', error);
   }
@@ -1402,25 +1492,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (commandName === 'setupverifybutton') {
-      // Send a verification button message to the current channel
+      // Send a verification button message (same format as /setupverify production)
       const verifyEmbed = new EmbedBuilder()
         .setColor('#5865F2')
-        .setTitle('🔗 Link your Lumist.ai Account')
-        .setDescription(
-          'Connect your Discord account with Lumist.ai to:\n\n' +
-          '✅ Get the **Verified** role\n' +
-          '💎 Get **Premium** role (if you have a subscription)\n' +
-          '🔔 Receive updates and exclusive perks\n\n' +
-          'Click the button below to get started!'
-        )
-        .setFooter({ text: 'lumist.ai • SAT Prep Platform' });
+        .setTitle('✅ Lumist.ai Account Verification')
+        .setDescription('Link your Lumist.ai account to unlock exclusive benefits!')
+        .addFields(
+          { name: '🎁 Benefits', value: '• Get the ✅ Verified badge\n• Display your referral code\n• Appear on leaderboards\n• Premium users get 💎 Premium role automatically' },
+          { name: '📝 How to Verify', value: 'Click the button below to start the verification process.\n\n*Don\'t have an account yet? Sign up at [lumist.ai](https://lumist.ai)*' }
+        );
 
       const verifyRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('verify_lumist')
-          .setLabel('Verify Account')
+          .setLabel('Verify Lumist.ai Account')
           .setStyle(ButtonStyle.Primary)
-          .setEmoji('🔗')
+          //.setEmoji('✅')
       );
 
       await interaction.channel.send({
@@ -2110,15 +2197,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // Verification buttons
     if (interaction.customId === 'verify_lumist') {
-      const discordUser = interaction.user;
       const crypto = require('crypto');
+      const discordUser = interaction.user;
 
-      // Generate OAuth URL with state containing interaction token for ephemeral message edit
-      const state = Buffer.from(JSON.stringify({
-        csrf: crypto.randomUUID(),
-        source: 'button',
-        interactionToken: interaction.token,
+      // Generate short token ID and store the full interaction token
+      const tokenId = crypto.randomBytes(8).toString('hex'); // 16 char hex string
+      pendingVerifications.set(tokenId, {
+        token: interaction.token,
         discordId: discordUser.id,
+        expiresAt: Date.now() + VERIFICATION_TOKEN_EXPIRY,
+      });
+
+      // Clean up expired tokens periodically
+      for (const [id, data] of pendingVerifications) {
+        if (Date.now() > data.expiresAt) pendingVerifications.delete(id);
+      }
+
+      // Generate OAuth state with short token ID (keeps URL under 512 chars)
+      const state = Buffer.from(JSON.stringify({
+        source: 'button',
+        tokenId: tokenId,
       })).toString('base64url');
 
       const clientId = process.env.DISCORD_CLIENT_ID;
@@ -2144,12 +2242,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           color: 0x5865f2,
           title: 'Link your Lumist.ai account',
           description:
-            `✅ **Lumist.ai Verification**\n\nClick the button below to verify your account\n\nAfter verifying on the website, you'll automatically receive the ✅ Verified role!` +
-            "**This message will update once you've completed verification!**",
+            '✅ **Lumist.ai Verification**\n\n' +
+            'Click the button below to verify your account.\n\n' +
+            'After completing verification on the website, this message will update automatically!',
           footer: { text: 'This message is only visible to you' },
         }],
         components: [row],
-        ephemeral: true,
+        flags: 64, // Ephemeral flag
       });
     }
 
